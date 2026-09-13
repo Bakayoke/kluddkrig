@@ -65,6 +65,7 @@ app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
     name: 'kluddkrig',
+    version: '2026-09-13-platforms',
     rooms: allRooms().size,
     persist: persistDiagnostics(),
   })

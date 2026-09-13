@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { ARENA_H, ARENA_W, GROUND_TOP } from './arena'
+import { ARENAS, ARENA_H, ARENA_W, GROUND_TOP } from './arena'
 import { punchNearWhiteTransparent } from './punchWhite'
 import type { FightSnapshot, PublicPlayer } from './types'
 
@@ -33,9 +33,11 @@ export function ArenaView({ fight, players, wide, shake }: Props) {
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-    // Always draw authoritative platforms from the server snapshot
-    const platforms = fight.platforms ?? []
-    const pits = fight.pits ?? []
+    // Prefer server platforms; fall back to local layout if API is behind
+    const fallback = ARENAS[fight.arenaId]
+    const platforms =
+      fight.platforms && fight.platforms.length > 0 ? fight.platforms : fallback.platforms
+    const pits = fight.pits && fight.pits.length > 0 ? fight.pits : fallback.pits
     const now = Date.now()
     const w = ARENA_W
     const h = ARENA_H
