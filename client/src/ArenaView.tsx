@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import { ARENAS, ARENA_H, ARENA_W, GROUND_TOP } from './arena'
+import { ARENA_H, ARENA_W, GROUND_TOP } from './arena'
 import { punchNearWhiteTransparent } from './punchWhite'
 import type { FightSnapshot, PublicPlayer } from './types'
 
@@ -33,7 +33,9 @@ export function ArenaView({ fight, players, wide, shake }: Props) {
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-    const layout = ARENAS[fight.arenaId]
+    // Always draw authoritative platforms from the server snapshot
+    const platforms = fight.platforms ?? []
+    const pits = fight.pits ?? []
     const now = Date.now()
     const w = ARENA_W
     const h = ARENA_H
@@ -53,16 +55,14 @@ export function ArenaView({ fight, players, wide, shake }: Props) {
     ctx.fillStyle = grad
     ctx.fillRect(0, 0, w, h)
 
-    // Pits
-    for (const pit of layout.pits) {
+    for (const pit of pits) {
       ctx.fillStyle = '#12081f'
       ctx.fillRect(pit.x, GROUND_TOP - 8, pit.w, h - GROUND_TOP + 8)
       ctx.fillStyle = 'rgba(255,107,157,0.35)'
       ctx.fillRect(pit.x, GROUND_TOP - 4, pit.w, 6)
     }
 
-    // Platforms
-    for (const p of layout.platforms) {
+    for (const p of platforms) {
       const isGround = p.y >= GROUND_TOP - 1
       ctx.fillStyle = isGround ? '#1a0f2e' : '#7c5cff'
       ctx.fillRect(p.x, p.y, p.w, p.h)
@@ -72,7 +72,6 @@ export function ArenaView({ fight, players, wide, shake }: Props) {
       }
     }
 
-    // Crates
     for (const c of fight.crates) {
       const bob = Math.sin(fight.tick / 8 + c.x) * 3
       ctx.fillStyle = '#ffe566'
@@ -86,7 +85,6 @@ export function ArenaView({ fight, players, wide, shake }: Props) {
       ctx.fillText('?', c.x, c.y + 5 + bob)
     }
 
-    // Fighters
     for (const f of fight.fighters) {
       const player = players.find((p) => p.id === f.playerId)
       const size = f.giantUntil > now ? 72 : 48

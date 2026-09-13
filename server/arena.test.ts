@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { ARENAS, JUMP_V, GRAVITY, resolveVertical } from './arena.ts'
+import { ARENAS, JUMP_V, GRAVITY, resolveVertical } from './arena.js'
 
 const layout = ARENAS.platforms
 const mid = layout.platforms.find((p) => p.y === 275)!

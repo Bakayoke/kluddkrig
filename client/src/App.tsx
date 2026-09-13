@@ -297,66 +297,100 @@ function FightPad({
   noAbilityLabel: string
 }) {
   const moveRef = useRef<-1 | 0 | 1>(0)
+  const stickRef = useRef<HTMLDivElement>(null)
+  const knobRef = useRef<HTMLDivElement>(null)
+  const activePtr = useRef<number | null>(null)
 
   useEffect(() => {
     const id = setInterval(() => {
-      if (moveRef.current !== 0) void sendInput({ move: moveRef.current })
+      void sendInput({ move: moveRef.current })
     }, 50)
     return () => clearInterval(id)
   }, [])
 
+  function setAxis(axis: -1 | 0 | 1, knobX = 0) {
+    moveRef.current = axis
+    const knob = knobRef.current
+    if (knob) {
+      knob.style.transform = `translate(calc(-50% + ${knobX}px), -50%)`
+    }
+  }
+
+  function axisFromClientX(clientX: number): { axis: -1 | 0 | 1; knobX: number } {
+    const el = stickRef.current
+    if (!el) return { axis: 0, knobX: 0 }
+    const rect = el.getBoundingClientRect()
+    const cx = rect.left + rect.width / 2
+    const dx = Math.max(-48, Math.min(48, clientX - cx))
+    const dead = 14
+    if (dx < -dead) return { axis: -1, knobX: dx }
+    if (dx > dead) return { axis: 1, knobX: dx }
+    return { axis: 0, knobX: dx }
+  }
+
+  function onStickDown(e: React.PointerEvent<HTMLDivElement>) {
+    e.preventDefault()
+    activePtr.current = e.pointerId
+    e.currentTarget.setPointerCapture(e.pointerId)
+    const { axis, knobX } = axisFromClientX(e.clientX)
+    setAxis(axis, knobX)
+    void sendInput({ move: axis })
+  }
+
+  function onStickMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (activePtr.current !== e.pointerId) return
+    const { axis, knobX } = axisFromClientX(e.clientX)
+    setAxis(axis, knobX)
+  }
+
+  function onStickUp(e: React.PointerEvent<HTMLDivElement>) {
+    if (activePtr.current !== null && activePtr.current !== e.pointerId) return
+    activePtr.current = null
+    setAxis(0, 0)
+    void sendInput({ move: 0 })
+  }
+
   return (
-    <div className="pad">
-      <div className="pad-move">
-        <button
-          type="button"
-          className="pad-btn"
-          onPointerDown={() => {
-            moveRef.current = -1
-            void sendInput({ move: -1 })
-          }}
-          onPointerUp={() => {
-            moveRef.current = 0
-            void sendInput({ move: 0 })
-          }}
-          onPointerLeave={() => {
-            moveRef.current = 0
-            void sendInput({ move: 0 })
-          }}
-        >
-          ←
-        </button>
-        <button
-          type="button"
-          className="pad-btn"
-          onPointerDown={() => {
-            moveRef.current = 1
-            void sendInput({ move: 1 })
-          }}
-          onPointerUp={() => {
-            moveRef.current = 0
-            void sendInput({ move: 0 })
-          }}
-          onPointerLeave={() => {
-            moveRef.current = 0
-            void sendInput({ move: 0 })
-          }}
-        >
-          →
-        </button>
+    <div className="pad gamepad">
+      <div
+        ref={stickRef}
+        className="stick"
+        onPointerDown={onStickDown}
+        onPointerMove={onStickMove}
+        onPointerUp={onStickUp}
+        onPointerCancel={onStickUp}
+      >
+        <div ref={knobRef} className="stick-knob" />
       </div>
       <div className="pad-actions">
-        <button type="button" className="pad-btn action" onPointerDown={() => void sendInput({ jump: true })}>
+        <button
+          type="button"
+          className="pad-btn action"
+          onPointerDown={(e) => {
+            e.preventDefault()
+            void sendInput({ jump: true })
+          }}
+        >
           ⤒
         </button>
-        <button type="button" className="pad-btn action punch" onPointerDown={() => void sendInput({ punch: true })}>
+        <button
+          type="button"
+          className="pad-btn action punch"
+          onPointerDown={(e) => {
+            e.preventDefault()
+            void sendInput({ punch: true })
+          }}
+        >
           ✊
         </button>
         <button
           type="button"
           className="pad-btn action loot"
           disabled={!hasAbility}
-          onPointerDown={() => hasAbility && void sendInput({ ability: true })}
+          onPointerDown={(e) => {
+            e.preventDefault()
+            if (hasAbility) void sendInput({ ability: true })
+          }}
         >
           {hasAbility ? abilityLabel : noAbilityLabel}
         </button>

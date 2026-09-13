@@ -651,11 +651,46 @@ body.tv-mode .tv-lobby-stage {
   user-select: none;
   touch-action: none;
 }
+.pad.gamepad {
+  grid-template-columns: 1fr 1fr;
+  align-items: end;
+  gap: 0.75rem;
+  padding: 0.25rem 0 0.5rem;
+}
+.stick {
+  width: 132px;
+  height: 132px;
+  border-radius: 50%;
+  background: rgba(255, 246, 232, 0.12);
+  border: 3px solid rgba(255, 246, 232, 0.28);
+  position: relative;
+  touch-action: none;
+  justify-self: start;
+}
+.stick-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  background: linear-gradient(140deg, var(--cyan), var(--violet));
+  border: 3px solid rgba(255, 246, 232, 0.55);
+  transform: translate(-50%, -50%);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
 .pad-move,
 .pad-actions {
   display: flex;
-  gap: 0.75rem;
+  flex-wrap: wrap;
+  gap: 0.65rem;
   justify-content: center;
+}
+.pad.gamepad .pad-actions {
+  justify-content: flex-end;
+  max-width: 220px;
+  justify-self: end;
 }
 .pad-btn {
   min-width: 88px;

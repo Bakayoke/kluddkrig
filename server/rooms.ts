@@ -3,7 +3,6 @@ import {
   ARENAS as ARENA_LAYOUTS,
   COYOTE_MS,
   FRICTION_AIR,
-  FRICTION_GROUND,
   GRAVITY,
   JUMP_V,
   MAX_FALL,
@@ -95,6 +94,7 @@ function spawnFighters(room: Room): FighterState[] {
       vx: 0,
       vy: 0,
       facing: (spawn.x < 400 ? 1 : -1) as 1 | -1,
+      moveAxis: 0,
       hp: 100,
       grounded: true,
       coyoteUntil: 0,
@@ -109,8 +109,11 @@ function spawnFighters(room: Room): FighterState[] {
 }
 
 function emptyFight(room: Room): FightSnapshot {
+  const layout = ARENA_LAYOUTS[room.arenaId]
   return {
     arenaId: room.arenaId,
+    platforms: layout.platforms.map((p) => ({ ...p })),
+    pits: layout.pits.map((p) => ({ ...p })),
     fighters: spawnFighters(room),
     crates: [],
     tick: 0,
@@ -125,6 +128,7 @@ function respawnFighter(f: FighterState, arenaId: ArenaId) {
   f.y = spawn.y
   f.vx = 0
   f.vy = 0
+  f.moveAxis = 0
   f.grounded = true
   f.coyoteUntil = Date.now() + COYOTE_MS
   f.hp = Math.max(20, f.hp - 15)
@@ -442,12 +446,16 @@ export function playerInput(
   const now = Date.now()
   if (fighter.frozenUntil > now) return room
 
-  let move = input.move ?? 0
-  if (fighter.invertUntil > now) move = (-move) as -1 | 0 | 1
-  const speed = fighter.grounded ? MOVE_GROUND : MOVE_AIR
-  if (move !== 0) {
-    fighter.vx = move * (fighter.giantUntil > now ? speed * 0.85 : speed)
-    fighter.facing = move > 0 ? 1 : -1
+  // Store raw stick intent; invert is applied each tick
+  if (input.move !== undefined) {
+    const move = input.move
+    fighter.moveAxis = move
+    if (move === 0) {
+      fighter.vx = 0
+    } else {
+      const facing = fighter.invertUntil > now ? ((-move) as -1 | 1) : move
+      fighter.facing = facing > 0 ? 1 : -1
+    }
   }
 
   const canJump = fighter.grounded || fighter.coyoteUntil > now
@@ -568,7 +576,18 @@ export function tickFight(room: Room) {
     if (f.frozenUntil > now) {
       f.vx = 0
       f.vy = 0
+      f.moveAxis = 0
       continue
+    }
+
+    let axis = f.moveAxis
+    if (f.invertUntil > now) axis = (-axis) as -1 | 0 | 1
+    const speed = f.grounded ? MOVE_GROUND : MOVE_AIR
+    if (axis === 0) {
+      f.vx = f.grounded ? 0 : f.vx * FRICTION_AIR
+    } else {
+      f.vx = axis * (f.giantUntil > now ? speed * 0.85 : speed)
+      f.facing = axis > 0 ? 1 : -1
     }
 
     f.vy = Math.min(MAX_FALL, f.vy + GRAVITY)
@@ -580,12 +599,10 @@ export function tickFight(room: Room) {
     if (resolved.grounded) {
       f.grounded = true
       f.coyoteUntil = now + COYOTE_MS
+      if (axis === 0) f.vx = 0
     } else {
       f.grounded = false
     }
-
-    if (f.grounded) f.vx *= FRICTION_GROUND
-    else f.vx *= FRICTION_AIR
 
     if (inPit(f.x, f.y, layout) || f.y > 430) {
       respawnFighter(f, fight.arenaId)

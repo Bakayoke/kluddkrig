@@ -6,6 +6,8 @@ export type AbilityId = 'teleport' | 'freeze' | 'invert' | 'giant' | 'inkblot'
 
 export type ArenaId = 'platforms' | 'pit' | 'bridge'
 
+export type Platform = { x: number; y: number; w: number; h: number }
+
 export type PublicPlayer = {
   id: string
   name: string
@@ -24,6 +26,7 @@ export type FighterState = {
   vx: number
   vy: number
   facing: 1 | -1
+  moveAxis: -1 | 0 | 1
   hp: number
   grounded: boolean
   coyoteUntil: number
@@ -56,6 +59,8 @@ export type CombatEvent = {
 
 export type FightSnapshot = {
   arenaId: ArenaId
+  platforms: Platform[]
+  pits: { x: number; w: number }[]
   fighters: FighterState[]
   crates: LootCrate[]
   tick: number

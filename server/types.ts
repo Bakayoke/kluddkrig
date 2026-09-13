@@ -24,6 +24,8 @@ export type Player = {
 
 export type ArenaId = 'platforms' | 'pit' | 'bridge'
 
+export type Platform = { x: number; y: number; w: number; h: number }
+
 export type FighterState = {
   playerId: string
   x: number
@@ -31,6 +33,8 @@ export type FighterState = {
   vx: number
   vy: number
   facing: 1 | -1
+  /** Held move intent from phone (-1/0/1). Applied each physics tick. */
+  moveAxis: -1 | 0 | 1
   hp: number
   grounded: boolean
   coyoteUntil: number
@@ -64,6 +68,9 @@ export type CombatEvent = {
 
 export type FightSnapshot = {
   arenaId: ArenaId
+  /** Authoritative geometry — client must draw these, not a local copy */
+  platforms: Platform[]
+  pits: { x: number; w: number }[]
   fighters: FighterState[]
   crates: LootCrate[]
   tick: number
