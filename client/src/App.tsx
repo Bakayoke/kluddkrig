@@ -297,23 +297,34 @@ function FightPad({
   noAbilityLabel: string
 }) {
   const moveRef = useRef<-1 | 0 | 1>(0)
+  const lastSentRef = useRef<-1 | 0 | 1 | null>(null)
   const stickRef = useRef<HTMLDivElement>(null)
   const knobRef = useRef<HTMLDivElement>(null)
   const activePtr = useRef<number | null>(null)
 
+  function emitMove(axis: -1 | 0 | 1, force = false) {
+    if (!force && lastSentRef.current === axis) return
+    lastSentRef.current = axis
+    sendInput({ move: axis })
+  }
+
   useEffect(() => {
+    // Heartbeat while held so a dropped packet does not leave you walking forever
     const id = setInterval(() => {
-      void sendInput({ move: moveRef.current })
-    }, 50)
+      const axis = moveRef.current
+      if (axis !== 0) emitMove(axis, true)
+    }, 180)
     return () => clearInterval(id)
   }, [])
 
   function setAxis(axis: -1 | 0 | 1, knobX = 0) {
+    const changed = moveRef.current !== axis
     moveRef.current = axis
     const knob = knobRef.current
     if (knob) {
       knob.style.transform = `translate(calc(-50% + ${knobX}px), -50%)`
     }
+    if (changed) emitMove(axis)
   }
 
   function axisFromClientX(clientX: number): { axis: -1 | 0 | 1; knobX: number } {
@@ -334,7 +345,6 @@ function FightPad({
     e.currentTarget.setPointerCapture(e.pointerId)
     const { axis, knobX } = axisFromClientX(e.clientX)
     setAxis(axis, knobX)
-    void sendInput({ move: axis })
   }
 
   function onStickMove(e: React.PointerEvent<HTMLDivElement>) {
@@ -347,7 +357,6 @@ function FightPad({
     if (activePtr.current !== null && activePtr.current !== e.pointerId) return
     activePtr.current = null
     setAxis(0, 0)
-    void sendInput({ move: 0 })
   }
 
   return (
@@ -368,7 +377,7 @@ function FightPad({
           className="pad-btn action"
           onPointerDown={(e) => {
             e.preventDefault()
-            void sendInput({ jump: true })
+            sendInput({ jump: true })
           }}
         >
           ⤒
@@ -378,7 +387,7 @@ function FightPad({
           className="pad-btn action punch"
           onPointerDown={(e) => {
             e.preventDefault()
-            void sendInput({ punch: true })
+            sendInput({ punch: true })
           }}
         >
           ✊
@@ -389,7 +398,7 @@ function FightPad({
           disabled={!hasAbility}
           onPointerDown={(e) => {
             e.preventDefault()
-            if (hasAbility) void sendInput({ ability: true })
+            if (hasAbility) sendInput({ ability: true })
           }}
         >
           {hasAbility ? abilityLabel : noAbilityLabel}
@@ -458,6 +467,12 @@ function RoomView({
     document.body.classList.toggle('tv-mode', tvMode)
     return () => document.body.classList.remove('tv-mode')
   }, [tvMode])
+
+  const padMode = room.status === 'fight' && room.youPlaying && !tvMode
+  useEffect(() => {
+    document.body.classList.toggle('pad-mode', padMode)
+    return () => document.body.classList.remove('pad-mode')
+  }, [padMode])
 
   useEffect(() => {
     const onFs = () => {
@@ -534,6 +549,35 @@ function RoomView({
         clearTimeout(t1)
         clearTimeout(t2)
         clearTimeout(t3)
+      }
+    }
+    if (ev.kind === 'ko') {
+      const text = fmt(ui.koMsg, { actor: ev.actorName, target: ev.targetName ?? '?' })
+      setToast({ text, kind: 'ko' })
+      setShake(true)
+      if (involvesYou) {
+        vibrate(ev.targetId === playerId ? [80, 40, 80, 40, 120] : [40, 30, 50])
+        setFlash(ev.targetId === playerId ? 'hurt' : 'hit')
+      }
+      const t1 = setTimeout(() => setShake(false), 400)
+      const t2 = setTimeout(() => setToast(null), 1800)
+      const t3 = setTimeout(() => setFlash(null), 320)
+      return () => {
+        clearTimeout(t1)
+        clearTimeout(t2)
+        clearTimeout(t3)
+      }
+    }
+    if (ev.kind === 'chaos' && ev.chaosKind) {
+      const label = ui.chaosLabels[ev.chaosKind] ?? ev.chaosKind
+      const text = fmt(ui.chaosMsg, { event: label })
+      setToast({ text, kind: 'chaos' })
+      if (ev.chaosKind === 'quake' || ev.chaosKind === 'meteor') setShake(true)
+      const t1 = setTimeout(() => setShake(false), 500)
+      const t2 = setTimeout(() => setToast(null), 2000)
+      return () => {
+        clearTimeout(t1)
+        clearTimeout(t2)
       }
     }
   }, [room.lastEvent, playerId, ui])
@@ -723,9 +767,11 @@ function RoomView({
 
       {room.status === 'fight' && room.fight && (
         <section className="phase fight-phase">
-          <h2>
-            {ui.fightTitle} · {countdown}s · {ui.arena}: {room.arenaId}
-          </h2>
+          {!padMode && (
+            <h2>
+              {ui.fightTitle} · {countdown}s · {ui.arena}: {room.arenaId}
+            </h2>
+          )}
           {(tvMode || !youPlaying) && (
             <ArenaView fight={room.fight} players={room.players} wide={tvMode} shake={shake} />
           )}
@@ -739,6 +785,7 @@ function RoomView({
                     <div className="hp-bar">
                       <span>
                         {ui.yourHp} {hp}
+                        {padMode ? ` · ${countdown}s` : ''}
                       </span>
                       <div className="hp-track">
                         <div className="hp-fill" style={{ width: `${hp}%` }} />
@@ -752,7 +799,8 @@ function RoomView({
                     : ui.noAbility}
                 </div>
               </div>
-              <p className="muted">{ui.fightTvHint}</p>
+              {padMode && <p className="pad-rotate-hint">{ui.padLandscape}</p>}
+              {!padMode && <p className="muted">{ui.fightTvHint}</p>}
               <FightPad
                 hasAbility={Boolean(room.yourAbility)}
                 abilityLabel={

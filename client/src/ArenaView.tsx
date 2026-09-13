@@ -87,6 +87,76 @@ export function ArenaView({ fight, players, wide, shake }: Props) {
       ctx.fillText('?', c.x, c.y + 5 + bob)
     }
 
+    const hazards = fight.hazards ?? []
+    for (const hz of hazards) {
+      const warning = hz.warnUntil > now
+      const pulse = warning ? 0.35 + 0.35 * Math.sin(now / 80) : 1
+      ctx.save()
+      ctx.globalAlpha = pulse
+      if (hz.kind === 'meteor') {
+        const y = warning ? 36 : hz.y
+        ctx.fillStyle = warning ? '#ff6b9d' : '#ff3d6e'
+        ctx.beginPath()
+        ctx.arc(hz.x, y, hz.size, 0, Math.PI * 2)
+        ctx.fill()
+        if (warning) {
+          ctx.strokeStyle = 'rgba(255,107,157,0.9)'
+          ctx.lineWidth = 3
+          ctx.setLineDash([6, 6])
+          ctx.beginPath()
+          ctx.moveTo(hz.x, 10)
+          ctx.lineTo(hz.x, GROUND_TOP)
+          ctx.stroke()
+          ctx.setLineDash([])
+        } else {
+          ctx.fillStyle = '#ffe566'
+          ctx.beginPath()
+          ctx.moveTo(hz.x - 8, hz.y - hz.size - 10)
+          ctx.lineTo(hz.x, hz.y - hz.size)
+          ctx.lineTo(hz.x + 8, hz.y - hz.size - 10)
+          ctx.fill()
+        }
+      } else if (hz.kind === 'spike') {
+        ctx.fillStyle = warning ? 'rgba(255,107,157,0.55)' : '#ff6b9d'
+        const tip = hz.y
+        const base = tip - (warning ? 18 : 28)
+        ctx.beginPath()
+        ctx.moveTo(hz.x - hz.size, tip)
+        ctx.lineTo(hz.x, base)
+        ctx.lineTo(hz.x + hz.size, tip)
+        ctx.closePath()
+        ctx.fill()
+      } else if (hz.kind === 'beam') {
+        ctx.fillStyle = warning ? 'rgba(92,225,230,0.35)' : 'rgba(92,225,230,0.75)'
+        ctx.fillRect(hz.x - hz.size, 0, hz.size * 2, h)
+        if (!warning) {
+          ctx.fillStyle = '#fff6e8'
+          ctx.fillRect(hz.x - 3, 0, 6, h)
+        }
+      }
+      ctx.restore()
+    }
+
+    if (fight.chaos && fight.chaos.endsAt > now) {
+      ctx.save()
+      ctx.globalAlpha = 0.18
+      if (fight.chaos.kind === 'wind') {
+        ctx.fillStyle = '#5ce1e6'
+        for (let i = 0; i < 6; i++) {
+          const y = 40 + i * 55
+          const drift = ((fight.tick * 4 * fight.chaos.dir) % 80) + i * 12
+          ctx.fillRect((drift + w) % w, y, 40, 4)
+        }
+      } else if (fight.chaos.kind === 'lowgrav') {
+        ctx.fillStyle = '#7c5cff'
+        ctx.fillRect(0, 0, w, h)
+      } else if (fight.chaos.kind === 'quake') {
+        ctx.fillStyle = '#ff6b9d'
+        ctx.fillRect(0, 0, w, h)
+      }
+      ctx.restore()
+    }
+
     for (const f of fight.fighters) {
       const player = players.find((p) => p.id === f.playerId)
       const size = f.giantUntil > now ? 72 : 48

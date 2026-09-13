@@ -1,6 +1,7 @@
 import { customAlphabet } from 'nanoid'
 import {
   ARENAS as ARENA_LAYOUTS,
+  ARENA_W,
   COYOTE_MS,
   FRICTION_AIR,
   GRAVITY,
@@ -15,8 +16,10 @@ import {
 import type {
   AbilityId,
   ArenaId,
+  ChaosKind,
   FightSnapshot,
   FighterState,
+  Hazard,
   Lang,
   Player,
   PublicRoom,
@@ -116,12 +119,14 @@ function emptyFight(room: Room): FightSnapshot {
     pits: layout.pits.map((p) => ({ ...p })),
     fighters: spawnFighters(room),
     crates: [],
+    hazards: [],
+    chaos: null,
     tick: 0,
     shakeUntil: 0,
   }
 }
 
-function respawnFighter(f: FighterState, arenaId: ArenaId) {
+function respawnFighter(f: FighterState, arenaId: ArenaId, fullHp = false) {
   const layout = ARENA_LAYOUTS[arenaId]
   const spawn = layout.spawns[Math.floor(Math.random() * layout.spawns.length)]!
   f.x = spawn.x
@@ -131,7 +136,41 @@ function respawnFighter(f: FighterState, arenaId: ArenaId) {
   f.moveAxis = 0
   f.grounded = true
   f.coyoteUntil = Date.now() + COYOTE_MS
-  f.hp = Math.max(20, f.hp - 15)
+  f.frozenUntil = 0
+  f.blindUntil = 0
+  f.invertUntil = 0
+  f.giantUntil = 0
+  f.hp = fullHp ? 100 : Math.max(20, f.hp - 15)
+  f.hitFlashUntil = Date.now() + 400
+}
+
+/** Apply damage; KO → full heal + random respawn. Returns true if KO. */
+function hurtFighter(
+  room: Room,
+  f: FighterState,
+  amount: number,
+  opts?: { killerId?: string; killerName?: string },
+): boolean {
+  if (!room.fight) return false
+  f.hp = Math.max(0, f.hp - amount)
+  f.hitFlashUntil = Date.now() + 350
+  if (f.hp > 0) return false
+  const victim = room.players.find((p) => p.id === f.playerId)
+  if (opts?.killerId && opts.killerId !== f.playerId) {
+    const killer = room.players.find((p) => p.id === opts.killerId)
+    if (killer) killer.score += 2
+  }
+  respawnFighter(f, room.fight.arenaId, true)
+  pushEvent(room, {
+    kind: 'ko',
+    actorId: opts?.killerId ?? f.playerId,
+    actorName: opts?.killerName ?? victim?.name ?? '?',
+    targetId: f.playerId,
+    targetName: victim?.name ?? '?',
+    damage: amount,
+  })
+  room.fight.shakeUntil = Date.now() + 400
+  return true
 }
 
 export function allRooms() {
@@ -435,7 +474,7 @@ export function playerInput(
   code: string,
   playerId: string,
   input: { move?: -1 | 0 | 1; jump?: boolean; punch?: boolean; ability?: boolean },
-) {
+): { error: string } | { room: Room; broadcast: boolean } {
   const room = getRoom(code)
   if (!room) return { error: 'Rummet finns inte' }
   if (room.status !== 'fight' || !room.fight) return { error: 'Inte fight-fas' }
@@ -444,7 +483,9 @@ export function playerInput(
   const actor = room.players.find((p) => p.id === playerId)
 
   const now = Date.now()
-  if (fighter.frozenUntil > now) return room
+  if (fighter.frozenUntil > now) return { room, broadcast: false }
+
+  let important = Boolean(input.jump || input.punch || input.ability)
 
   // Store raw stick intent; invert is applied each tick
   if (input.move !== undefined) {
@@ -466,7 +507,7 @@ export function playerInput(
   }
 
   if (input.punch && fighter.punchCooldownUntil <= now) {
-    fighter.punchCooldownUntil = now + 380
+    fighter.punchCooldownUntil = now + 320
     for (const other of room.fight.fighters) {
       if (other.playerId === playerId) continue
       const dx = other.x - fighter.x
@@ -474,23 +515,27 @@ export function playerInput(
       const reach = fighter.giantUntil > now ? 78 : 52
       if (Math.abs(dx) < reach && Math.abs(dy) < 50 && Math.sign(dx || fighter.facing) === fighter.facing) {
         const dmg = fighter.giantUntil > now ? 16 : 10
-        other.hp = Math.max(0, other.hp - dmg)
         other.vx += fighter.facing * 10
         other.vy = Math.min(other.vy, -5)
-        other.hitFlashUntil = now + 350
         other.grounded = false
         other.coyoteUntil = 0
         if (actor) actor.score += 1
-        const target = room.players.find((p) => p.id === other.playerId)
-        pushEvent(room, {
-          kind: 'hit',
-          actorId: playerId,
-          actorName: actor?.name ?? '?',
-          targetId: other.playerId,
-          targetName: target?.name ?? '?',
-          damage: dmg,
+        const ko = hurtFighter(room, other, dmg, {
+          killerId: playerId,
+          killerName: actor?.name,
         })
+        if (!ko) {
+          pushEvent(room, {
+            kind: 'hit',
+            actorId: playerId,
+            actorName: actor?.name ?? '?',
+            targetId: other.playerId,
+            targetName: room.players.find((p) => p.id === other.playerId)?.name ?? '?',
+            damage: dmg,
+          })
+        }
         room.fight.shakeUntil = now + 350
+        important = true
       }
     }
   }
@@ -511,11 +556,13 @@ export function playerInput(
         ability,
       })
       room.fight.shakeUntil = now + 280
+      important = true
     }
   }
 
-  touch(room)
-  return room
+  // Don't persist Redis on every stick nudge
+  if (important) touch(room)
+  return { room, broadcast: important }
 }
 
 function applyAbility(room: Room, fromId: string, ability: AbilityId): string | null {
@@ -564,13 +611,21 @@ function applyAbility(room: Room, fromId: string, ability: AbilityId): string | 
   return null
 }
 
-/** Physics tick ~20 Hz */
+/** Physics tick ~33 Hz when polled at 30ms */
 export function tickFight(room: Room) {
   if (room.status !== 'fight' || !room.fight) return
   const fight = room.fight
+  if (!fight.hazards) fight.hazards = []
+  if (fight.chaos === undefined) fight.chaos = null
   const layout = ARENA_LAYOUTS[fight.arenaId]
   fight.tick += 1
   const now = Date.now()
+
+  if (fight.chaos && fight.chaos.endsAt <= now) fight.chaos = null
+
+  const gravMul = fight.chaos?.kind === 'lowgrav' ? 0.42 : 1
+  const wind = fight.chaos?.kind === 'wind' ? fight.chaos.dir * 2.4 : 0
+  const quake = fight.chaos?.kind === 'quake'
 
   for (const f of fight.fighters) {
     if (f.frozenUntil > now) {
@@ -589,8 +644,10 @@ export function tickFight(room: Room) {
       f.vx = axis * (f.giantUntil > now ? speed * 0.85 : speed)
       f.facing = axis > 0 ? 1 : -1
     }
+    f.vx += wind
+    if (quake) f.vx += (Math.random() - 0.5) * 5
 
-    f.vy = Math.min(MAX_FALL, f.vy + GRAVITY)
+    f.vy = Math.min(MAX_FALL, f.vy + GRAVITY * gravMul)
     f.x = clampX(f.x + f.vx)
     const nextY = f.y + f.vy
     const resolved = resolveVertical(f.x, nextY, f.vy, layout)
@@ -599,13 +656,13 @@ export function tickFight(room: Room) {
     if (resolved.grounded) {
       f.grounded = true
       f.coyoteUntil = now + COYOTE_MS
-      if (axis === 0) f.vx = 0
+      if (axis === 0 && !wind && !quake) f.vx = 0
     } else {
       f.grounded = false
     }
 
     if (inPit(f.x, f.y, layout) || f.y > 430) {
-      respawnFighter(f, fight.arenaId)
+      respawnFighter(f, fight.arenaId, false)
       const name = room.players.find((p) => p.id === f.playerId)?.name ?? '?'
       pushEvent(room, {
         kind: 'hit',
@@ -618,6 +675,106 @@ export function tickFight(room: Room) {
       fight.shakeUntil = now + 320
     }
   }
+
+  // Random arena chaos (wind / quake / low grav)
+  if (fight.tick % 110 === 35 && !fight.chaos && Math.random() < 0.62) {
+    const kinds: ChaosKind[] = ['wind', 'quake', 'lowgrav']
+    const kind = kinds[Math.floor(Math.random() * kinds.length)]!
+    fight.chaos = {
+      kind,
+      dir: kind === 'wind' ? (Math.random() < 0.5 ? -1 : 1) : 0,
+      endsAt: now + (kind === 'quake' ? 2800 : 4800),
+    }
+    if (kind === 'quake') fight.shakeUntil = Math.max(fight.shakeUntil, now + 2800)
+    pushEvent(room, {
+      kind: 'chaos',
+      actorId: 'arena',
+      actorName: 'Arena',
+      chaosKind: kind,
+    })
+  }
+
+  // Spawn dodge hazards
+  if (fight.tick % 48 === 0 && fight.hazards.length < 4 && Math.random() < 0.72) {
+    const roll = Math.random()
+    let hazard: Hazard
+    if (roll < 0.42) {
+      hazard = {
+        id: crypto.randomUUID(),
+        kind: 'meteor',
+        x: 50 + Math.random() * (ARENA_W - 100),
+        y: -30,
+        size: 26 + Math.random() * 10,
+        vy: 0,
+        warnUntil: now + 850,
+        endsAt: now + 4200,
+      }
+    } else if (roll < 0.72) {
+      const plat = layout.platforms[Math.floor(Math.random() * layout.platforms.length)]!
+      hazard = {
+        id: crypto.randomUUID(),
+        kind: 'spike',
+        x: plat.x + 16 + Math.random() * Math.max(8, plat.w - 32),
+        y: plat.y,
+        size: 20,
+        vy: 0,
+        warnUntil: now + 650,
+        endsAt: now + 3200,
+      }
+    } else {
+      hazard = {
+        id: crypto.randomUUID(),
+        kind: 'beam',
+        x: 70 + Math.random() * (ARENA_W - 140),
+        y: 0,
+        size: 16,
+        vy: 0,
+        warnUntil: now + 750,
+        endsAt: now + 2600,
+      }
+    }
+    fight.hazards.push(hazard)
+  }
+
+  // Update + collide hazards
+  const still: Hazard[] = []
+  for (const h of fight.hazards) {
+    if (h.endsAt <= now) continue
+    const active = h.warnUntil <= now
+    if (active && h.kind === 'meteor') {
+      h.vy = Math.min(15, h.vy + 0.55)
+      h.y += h.vy
+      if (h.y > 460) continue
+    }
+    if (active) {
+      for (const f of fight.fighters) {
+        if (f.frozenUntil > now) continue
+        let hit = false
+        if (h.kind === 'meteor') {
+          const dx = f.x - h.x
+          const dy = f.y - 24 - h.y
+          hit = dx * dx + dy * dy < (h.size + 22) * (h.size + 22)
+        } else if (h.kind === 'spike' && fight.tick % 6 === 0) {
+          hit = Math.abs(f.x - h.x) < h.size + 10 && f.y > h.y - 50 && f.y < h.y + 8
+        } else if (h.kind === 'beam' && fight.tick % 7 === 0) {
+          hit = Math.abs(f.x - h.x) < h.size + 14
+        }
+        if (hit) {
+          const dmg = h.kind === 'meteor' ? 20 : h.kind === 'spike' ? 14 : 10
+          hurtFighter(room, f, dmg)
+          f.vx += (f.x < h.x ? -1 : 1) * 7
+          f.vy = Math.min(f.vy, -4)
+          f.grounded = false
+          if (h.kind === 'meteor') {
+            // meteor consumed
+            h.endsAt = now
+          }
+        }
+      }
+    }
+    if (h.endsAt > now) still.push(h)
+  }
+  fight.hazards = still
 
   if (fight.tick % 90 === 0 && fight.crates.length < 3) {
     const spot = layout.crateSpots[Math.floor(Math.random() * layout.crateSpots.length)]!
@@ -733,11 +890,19 @@ export function pruneIdleRooms() {
 export function hydrateRooms(list: Room[]) {
   rooms.clear()
   for (const room of list) {
+    const fight =
+      room.status === 'fight' && room.fight
+        ? {
+            ...room.fight,
+            hazards: room.fight.hazards ?? [],
+            chaos: room.fight.chaos ?? null,
+          }
+        : null
     rooms.set(room.code, {
       ...room,
       lastEvent: room.lastEvent ?? null,
       players: room.players.map((p) => ({ ...p, connected: false })),
-      fight: room.status === 'fight' ? room.fight : null,
+      fight,
     })
   }
 }

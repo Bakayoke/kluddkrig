@@ -38,6 +38,87 @@ body.tv-mode {
   overflow: hidden;
 }
 
+/* Phone fight pad: landscape gamepad only */
+body.pad-mode {
+  overflow: hidden;
+  touch-action: none;
+}
+body.pad-mode .app {
+  padding: 0;
+  max-width: none;
+  min-height: 100dvh;
+}
+body.pad-mode .room {
+  min-height: 100dvh;
+}
+body.pad-mode .room-bar,
+body.pad-mode .sister-label,
+body.pad-mode .sister-games {
+  display: none !important;
+}
+body.pad-mode .fight-phase {
+  min-height: 100dvh;
+  margin: 0;
+  padding:
+    max(0.4rem, env(safe-area-inset-top))
+    max(0.75rem, env(safe-area-inset-right))
+    max(0.5rem, env(safe-area-inset-bottom))
+    max(0.75rem, env(safe-area-inset-left));
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+body.pad-mode .fight-hud {
+  margin: 0;
+  flex-shrink: 0;
+}
+body.pad-mode .pad.gamepad {
+  flex: 1;
+  margin: 0;
+  min-height: 0;
+  align-items: center;
+  padding: 0;
+}
+body.pad-mode .combat-toast {
+  top: max(0.5rem, env(safe-area-inset-top));
+  font-size: 0.95rem;
+  padding: 0.55rem 0.9rem;
+}
+.pad-rotate-hint {
+  display: none;
+  margin: 0;
+  text-align: center;
+  font-size: 0.85rem;
+  opacity: 0.7;
+}
+@media (orientation: portrait) {
+  body.pad-mode .pad-rotate-hint {
+    display: block;
+  }
+}
+@media (orientation: landscape) {
+  body.pad-mode .stick {
+    width: min(160px, 28vh);
+    height: min(160px, 28vh);
+  }
+  body.pad-mode .stick-knob {
+    width: min(68px, 12vh);
+    height: min(68px, 12vh);
+  }
+  body.pad-mode .pad-btn {
+    min-width: min(96px, 18vh);
+    min-height: min(96px, 18vh);
+  }
+  body.pad-mode .pad-btn.loot {
+    min-width: min(130px, 24vh);
+    font-size: 0.85rem;
+  }
+  body.pad-mode .pad.gamepad .pad-actions {
+    max-width: none;
+    gap: 0.5rem;
+  }
+}
+
 .app {
   max-width: 960px;
   margin: 0 auto;
@@ -420,6 +501,13 @@ body.tv-mode .tv-lobby-stage {
 .combat-toast.kind-ability {
   background: linear-gradient(120deg, var(--violet), var(--pink));
   color: #fff;
+}
+.combat-toast.kind-ko {
+  background: linear-gradient(120deg, var(--pink), #1a0f2e);
+}
+.combat-toast.kind-chaos {
+  background: linear-gradient(120deg, var(--orange), var(--yellow));
+  color: var(--ink);
 }
 
 .screen-flash {

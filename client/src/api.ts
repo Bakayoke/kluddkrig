@@ -209,7 +209,10 @@ export async function sendInput(input: {
   punch?: boolean
   ability?: boolean
 }) {
-  return ack<OkMaybe>('input', input)
+  const s = getSocket()
+  if (!s.connected) return
+  // Fire-and-forget — waiting for ack adds perceived lag on every stick nudge
+  s.emit('input', input)
 }
 
 export async function rematch() {

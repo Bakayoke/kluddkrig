@@ -54,8 +54,33 @@ export type LootCrate = {
   ability: AbilityId
 }
 
+/** Things to dodge in the arena */
+export type Hazard = {
+  id: string
+  kind: 'meteor' | 'spike' | 'beam'
+  x: number
+  y: number
+  /** meteor radius / beam half-width */
+  size: number
+  /** For meteor: vertical speed once active */
+  vy: number
+  /** Warning phase until this time, then active */
+  warnUntil: number
+  /** Remove after */
+  endsAt: number
+}
+
+export type ChaosKind = 'wind' | 'quake' | 'lowgrav'
+
+export type ChaosState = {
+  kind: ChaosKind
+  /** wind direction */
+  dir: -1 | 0 | 1
+  endsAt: number
+}
+
 export type CombatEvent = {
-  kind: 'hit' | 'loot' | 'ability'
+  kind: 'hit' | 'loot' | 'ability' | 'chaos' | 'ko'
   at: number
   seq: number
   actorId: string
@@ -64,6 +89,7 @@ export type CombatEvent = {
   targetName?: string
   ability?: AbilityId
   damage?: number
+  chaosKind?: ChaosKind | Hazard['kind']
 }
 
 export type FightSnapshot = {
@@ -73,6 +99,8 @@ export type FightSnapshot = {
   pits: { x: number; w: number }[]
   fighters: FighterState[]
   crates: LootCrate[]
+  hazards: Hazard[]
+  chaos: ChaosState | null
   tick: number
   shakeUntil: number
 }

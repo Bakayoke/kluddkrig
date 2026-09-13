@@ -65,7 +65,7 @@ app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
     name: 'kluddkrig',
-    version: '2026-09-13-platforms',
+    version: '2026-09-13-chaos',
     rooms: allRooms().size,
     persist: persistDiagnostics(),
   })
@@ -243,17 +243,23 @@ io.on('connection', (socket) => {
   socket.on('input', (payload, ack) => {
     const binding = getBinding(socket.id)
     if (!binding) return ack?.({ ok: false, error: 'Inte ansluten' })
-    const move =
-      payload?.move === -1 || payload?.move === 0 || payload?.move === 1 ? payload.move : 0
-    const result = playerInput(binding.code, binding.playerId, {
-      move,
-      jump: Boolean(payload?.jump),
-      punch: Boolean(payload?.punch),
-      ability: Boolean(payload?.ability),
-    })
+    const input: {
+      move?: -1 | 0 | 1
+      jump?: boolean
+      punch?: boolean
+      ability?: boolean
+    } = {}
+    if (payload?.move === -1 || payload?.move === 0 || payload?.move === 1) {
+      input.move = payload.move
+    }
+    if (payload?.jump) input.jump = true
+    if (payload?.punch) input.punch = true
+    if (payload?.ability) input.ability = true
+    const result = playerInput(binding.code, binding.playerId, input)
     if ('error' in result) return ack?.({ ok: false, error: result.error })
     ack?.({ ok: true })
-    broadcastRoom(result.code)
+    // Stick moves sync via fight tick — only push immediately on actions/hits
+    if (result.broadcast) broadcastRoom(result.room.code)
   })
 
   socket.on('rematch', (_data, ack) => {
@@ -288,13 +294,13 @@ setInterval(() => {
   }
 }, 250)
 
-// Fight tick ~20 Hz
+// Fight tick ~33 Hz
 setInterval(() => {
   for (const room of roomsInFight()) {
     tickFight(room)
     broadcastRoom(room.code)
   }
-}, 50)
+}, 30)
 
 setInterval(() => {
   pruneIdleRooms()
