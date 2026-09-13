@@ -224,6 +224,16 @@ export async function fetchHealth() {
   return apiJson<{ ok: boolean; rooms?: number; persist?: { configured: boolean } }>('/api/health')
 }
 
+export async function fetchRoomPreview(code: string) {
+  const path = `/api/room/${encodeURIComponent(code.trim().toUpperCase())}/preview`
+  const res = await fetch(apiUrl(path), { signal: AbortSignal.timeout(8_000) })
+  const data = (await res.json().catch(() => ({}))) as import('./types').RoomPreview & {
+    error?: string
+  }
+  if (!res.ok) throw new Error(data.error || `API error ${res.status}`)
+  return data
+}
+
 const SESSION_KEY = 'kluddkrig-session'
 
 export function loadSession(): Session | null {

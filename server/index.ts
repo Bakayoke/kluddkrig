@@ -252,7 +252,7 @@ io.on('connection', (socket) => {
     })
     if ('error' in result) return ack?.({ ok: false, error: result.error })
     ack?.({ ok: true })
-    // Fight broadcasts happen on tick interval for smoother TV sync
+    broadcastRoom(result.code)
   })
 
   socket.on('rematch', (_data, ack) => {

@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   backToLobby,
   clearSession,
   createGame,
   ensureSessionBound,
+  fetchRoomPreview,
   joinGame,
   loadSession,
   rematch,
@@ -22,7 +23,7 @@ import { ArenaView } from './ArenaView'
 import { DoodleCanvas } from './DoodleCanvas'
 import { fmt, t } from './i18n'
 import { JoinQr } from './qr'
-import type { Lang, PublicRoom } from './types'
+import type { Lang, PublicRoom, RoomPreview } from './types'
 
 const KLOTTERKAOS_URL = 'https://klotterkaos.com'
 const FACTOPIA_URL = 'https://factopia.net'
@@ -67,29 +68,30 @@ function useCountdown(endsAt: number) {
   return left
 }
 
+function vibrate(pattern: number | number[]) {
+  try {
+    navigator.vibrate?.(pattern)
+  } catch {
+    /* ignore */
+  }
+}
+
 function Home({
   lang,
   setLang,
   onCreated,
-  onJoined,
+  onOpenJoin,
 }: {
   lang: Lang
   setLang: (l: Lang) => void
-  onCreated: (room: PublicRoom, playerId: string, name: string) => void
-  onJoined: (room: PublicRoom, playerId: string, name: string) => void
+  onCreated: (room: PublicRoom, playerId: string, name: string, hostPlays: boolean) => void
+  onOpenJoin: (code?: string) => void
 }) {
   const ui = t(lang)
   const [name, setName] = useState('')
-  const [code, setCode] = useState('')
   const [hostPlays, setHostPlaysLocal] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-
-  const params = useMemo(() => new URLSearchParams(window.location.search), [])
-  useEffect(() => {
-    const join = params.get('join')
-    if (join) setCode(join.toUpperCase())
-  }, [params])
 
   async function create() {
     setBusy(true)
@@ -100,24 +102,7 @@ function Home({
         setError(res.error ?? 'Error')
         return
       }
-      onCreated(res.room, res.playerId, name)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function join() {
-    setBusy(true)
-    setError(null)
-    try {
-      const res = await joinGame(code, name || (lang === 'en' ? 'Player' : 'Spelare'))
-      if (!res.ok) {
-        setError(res.error ?? 'Error')
-        return
-      }
-      onJoined(res.room, res.playerId, name)
+      onCreated(res.room, res.playerId, name, hostPlays)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error')
     } finally {
@@ -145,7 +130,7 @@ function Home({
       <section className="panel">
         <label>
           {ui.name}
-          <input value={name} maxLength={20} onChange={(e) => setName(e.target.value)} />
+          <input value={name} maxLength={20} onChange={(e) => setName(e.target.value)} autoComplete="nickname" />
         </label>
         <label className="check">
           <input type="checkbox" checked={hostPlays} onChange={(e) => setHostPlaysLocal(e.target.checked)} />
@@ -157,16 +142,7 @@ function Home({
       </section>
 
       <section className="panel">
-        <label>
-          {ui.code}
-          <input
-            value={code}
-            maxLength={4}
-            onChange={(e) => setCode(e.target.value.toUpperCase())}
-            placeholder="ABCD"
-          />
-        </label>
-        <button type="button" className="btn wide" disabled={busy || code.length < 4} onClick={() => void join()}>
+        <button type="button" className="btn wide" disabled={busy} onClick={() => onOpenJoin()}>
           {ui.join}
         </button>
       </section>
@@ -189,7 +165,137 @@ function Home({
   )
 }
 
-function FightPad({ hasAbility, abilityLabel, noAbilityLabel }: { hasAbility: boolean; abilityLabel: string; noAbilityLabel: string }) {
+function JoinScreen({
+  lang,
+  initialCode,
+  onJoined,
+  onBack,
+}: {
+  lang: Lang
+  initialCode: string
+  onJoined: (room: PublicRoom, playerId: string, name: string) => void
+  onBack: () => void
+}) {
+  const ui = t(lang)
+  const [step, setStep] = useState<'code' | 'name'>(initialCode.length === 4 ? 'name' : 'code')
+  const [code, setCode] = useState(initialCode)
+  const [name, setName] = useState('')
+  const [preview, setPreview] = useState<RoomPreview | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (code.length !== 4) {
+      setPreview(null)
+      return
+    }
+    void fetchRoomPreview(code)
+      .then(setPreview)
+      .catch(() => setPreview(null))
+  }, [code])
+
+  async function goName(e: React.FormEvent) {
+    e.preventDefault()
+    if (code.length < 4) return
+    setStep('name')
+  }
+
+  async function doJoin(e: React.FormEvent) {
+    e.preventDefault()
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await joinGame(code, name || (lang === 'en' ? 'Player' : 'Spelare'))
+      if (!res.ok) {
+        setError(res.error ?? 'Error')
+        return
+      }
+      onJoined(res.room, res.playerId, name)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="home join-screen">
+      <header className="hero compact">
+        <p className="brand">Kluddkrig</p>
+        <p className="tagline">{ui.joinTitle}</p>
+      </header>
+
+      {step === 'code' && (
+        <form className="panel" onSubmit={(e) => void goName(e)}>
+          <label>
+            {ui.code}
+            <input
+              value={code}
+              maxLength={4}
+              autoFocus
+              onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4))}
+              placeholder="ABCD"
+            />
+          </label>
+          <button type="submit" className="btn primary wide" disabled={code.length < 4}>
+            {ui.join}
+          </button>
+          <button type="button" className="btn ghost wide" onClick={onBack}>
+            {ui.back}
+          </button>
+        </form>
+      )}
+
+      {step === 'name' && (
+        <form className="panel" onSubmit={(e) => void doJoin(e)}>
+          <h2>
+            {ui.joinCodeHint} <span className="code-inline">{code}</span>
+          </h2>
+          {preview && (
+            <p className="muted">
+              {preview.hostName} · {preview.playerCount} {ui.previewPlayers}
+            </p>
+          )}
+          <label>
+            {ui.name}
+            <input
+              value={name}
+              maxLength={20}
+              autoFocus
+              autoComplete="nickname"
+              onChange={(e) => setName(e.target.value)}
+            />
+          </label>
+          <button type="submit" className="btn primary wide" disabled={busy}>
+            {ui.join}
+          </button>
+          <button
+            type="button"
+            className="btn ghost wide"
+            onClick={() => {
+              setStep('code')
+              setError(null)
+            }}
+          >
+            {ui.back}
+          </button>
+        </form>
+      )}
+
+      {error && <p className="error">{error}</p>}
+    </div>
+  )
+}
+
+function FightPad({
+  hasAbility,
+  abilityLabel,
+  noAbilityLabel,
+}: {
+  hasAbility: boolean
+  abilityLabel: string
+  noAbilityLabel: string
+}) {
   const moveRef = useRef<-1 | 0 | 1>(0)
 
   useEffect(() => {
@@ -263,15 +369,20 @@ function RoomView({
   room,
   playerId,
   lang,
+  initialTv,
   onLeave,
 }: {
   room: PublicRoom
   playerId: string
   lang: Lang
+  initialTv?: boolean
   onLeave: () => void
 }) {
   const ui = t(lang)
-  const [tvMode, setTvMode] = useState(false)
+  const [tvMode, setTvMode] = useState(Boolean(initialTv))
+  const [toast, setToast] = useState<string | null>(null)
+  const [shake, setShake] = useState(false)
+  const lastEventAt = useRef(0)
   const countdown = useCountdown(room.phaseEndsAt)
   const joinUrl = `${window.location.origin}?join=${room.code}`
 
@@ -280,22 +391,83 @@ function RoomView({
     return () => document.body.classList.remove('tv-mode')
   }, [tvMode])
 
+  useEffect(() => {
+    const onFs = () => {
+      if (!document.fullscreenElement) setTvMode(false)
+    }
+    document.addEventListener('fullscreenchange', onFs)
+    return () => document.removeEventListener('fullscreenchange', onFs)
+  }, [])
+
+  useEffect(() => {
+    const ev = room.lastEvent
+    if (!ev || ev.at <= lastEventAt.current) return
+    lastEventAt.current = ev.at
+    const involvesYou = ev.actorId === playerId || ev.targetId === playerId
+    if (ev.kind === 'hit') {
+      if (involvesYou) vibrate([30, 40, 55])
+      setShake(true)
+      setToast(ui.hitFlash)
+      const t1 = setTimeout(() => setShake(false), 280)
+      const t2 = setTimeout(() => setToast(null), 900)
+      return () => {
+        clearTimeout(t1)
+        clearTimeout(t2)
+      }
+    }
+    if (ev.kind === 'loot' && ev.actorId === playerId) {
+      vibrate([20, 30, 20])
+      setToast(`${ui.lootGot} ${ev.ability ?? ''}`)
+      const t2 = setTimeout(() => setToast(null), 1100)
+      return () => clearTimeout(t2)
+    }
+    if (ev.kind === 'ability' && involvesYou) {
+      vibrate([40, 20, 40])
+      setShake(true)
+      const t1 = setTimeout(() => setShake(false), 220)
+      return () => clearTimeout(t1)
+    }
+  }, [room.lastEvent, playerId, ui.hitFlash, ui.lootGot])
+
+  async function toggleTvMode() {
+    if (tvMode) {
+      setTvMode(false)
+      try {
+        if (document.fullscreenElement) await document.exitFullscreen()
+        else (document as Document & { webkitExitFullscreen?: () => void }).webkitExitFullscreen?.()
+      } catch {
+        /* ignore */
+      }
+      return
+    }
+    const el = document.documentElement as HTMLElement & {
+      webkitRequestFullscreen?: () => void
+    }
+    try {
+      if (el.requestFullscreen) await el.requestFullscreen()
+      else el.webkitRequestFullscreen?.()
+    } catch {
+      /* CSS tv-mode still applies */
+    }
+    setTvMode(true)
+  }
+
   const youPlaying = room.youPlaying
 
   return (
-    <div className="room">
+    <div className={`room${shake ? ' room-shake' : ''}`}>
       <header className="room-bar">
         <div>
           <p className="brand-sm">Kluddkrig</p>
           <p className="code-big">{room.code}</p>
         </div>
         <div className="room-actions">
-          <button type="button" className="chip" onClick={() => setTvMode((v) => !v)}>
+          <button type="button" className="chip" onClick={() => void toggleTvMode()}>
             {tvMode ? ui.tvExit : ui.tvMode}
           </button>
           <button
             type="button"
-            className="chip"
+            className="chip hide-on-tv"
             onClick={() => {
               clearSession()
               onLeave()
@@ -306,63 +478,85 @@ function RoomView({
         </div>
       </header>
 
+      {toast && <div className="combat-toast">{toast}</div>}
+
       {room.status === 'lobby' && (
         <>
-          {tvMode ? (
-            <div className="tv-lobby">
-              <JoinQr url={joinUrl} size={320} alt={room.code} />
+          <div className="tv-lobby-stage">
+            <div className="tv-lobby-qr">
+              <JoinQr url={joinUrl} size={300} alt={room.code} />
               <p className="code-huge">{room.code}</p>
+              <p className="muted">{ui.scanOnPhone}</p>
             </div>
-          ) : (
-            <div className="lobby-grid">
-              <div className="panel">
-                <JoinQr url={joinUrl} size={200} alt={room.code} />
-                <p className="muted">{joinUrl}</p>
-              </div>
-              <div className="panel">
-                <h3>{ui.waiting}</h3>
-                <ul className="player-list">
-                  {room.players.map((p) => (
-                    <li key={p.id}>
-                      <span>{p.name}</span>
-                      {!p.connected && <em>…</em>}
-                      {p.id === room.hostId && <strong> ★</strong>}
-                    </li>
-                  ))}
-                </ul>
-                {room.youAreHost && (
-                  <div className="host-opts">
-                    <label className="check">
-                      <input
-                        type="checkbox"
-                        checked={room.players.find((p) => p.id === room.hostId)?.playing ?? true}
-                        onChange={(e) => void setHostPlaying(e.target.checked)}
-                      />
-                      {ui.hostPlays}
-                    </label>
-                    <label className="check">
-                      <input
-                        type="checkbox"
-                        checked={room.isPublic}
-                        onChange={(e) => void setPublicLobby(e.target.checked)}
-                      />
-                      {ui.publicLobby}
-                    </label>
-                    <button
-                      type="button"
-                      className="btn primary wide"
-                      disabled={room.playingCount < room.minPlayers}
-                      onClick={() => void startGame()}
-                    >
-                      {room.playingCount < room.minPlayers
-                        ? fmt(ui.needPlayers, { n: room.minPlayers })
-                        : ui.start}
-                    </button>
-                  </div>
-                )}
-              </div>
+            <div className="tv-roster">
+              <h3>
+                {ui.players} ({room.players.length})
+              </h3>
+              <ul className="tv-roster-list">
+                {room.players.map((p) => (
+                  <li
+                    key={p.id}
+                    className={`${p.playing ? 'is-playing' : 'is-hosting'}${p.connected ? '' : ' offline'}`}
+                  >
+                    <span className="tv-roster-name">{p.name}</span>
+                    <span className="tv-roster-meta">
+                      {p.id === room.hostId ? ui.host : p.playing ? '✓' : ui.spectator}
+                      {!p.connected ? ` · ${ui.offline}` : ''}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             </div>
-          )}
+          </div>
+
+          <div className="lobby-grid hide-on-tv">
+            <div className="panel">
+              <JoinQr url={joinUrl} size={200} alt={room.code} />
+              <p className="muted">{joinUrl}</p>
+            </div>
+            <div className="panel">
+              <h3>{ui.waiting}</h3>
+              <ul className="player-list">
+                {room.players.map((p) => (
+                  <li key={p.id}>
+                    <span>{p.name}</span>
+                    {!p.connected && <em>…</em>}
+                    {p.id === room.hostId && <strong> ★</strong>}
+                  </li>
+                ))}
+              </ul>
+              {room.youAreHost && (
+                <div className="host-opts">
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={room.players.find((p) => p.id === room.hostId)?.playing ?? true}
+                      onChange={(e) => void setHostPlaying(e.target.checked)}
+                    />
+                    {ui.hostPlays}
+                  </label>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={room.isPublic}
+                      onChange={(e) => void setPublicLobby(e.target.checked)}
+                    />
+                    {ui.publicLobby}
+                  </label>
+                  <button
+                    type="button"
+                    className="btn primary wide"
+                    disabled={room.playingCount < room.minPlayers}
+                    onClick={() => void startGame()}
+                  >
+                    {room.playingCount < room.minPlayers
+                      ? fmt(ui.needPlayers, { n: room.minPlayers })
+                      : ui.start}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         </>
       )}
 
@@ -394,10 +588,7 @@ function RoomView({
             room.players.find((p) => p.id === playerId)?.doodleDone ? (
               <p>{ui.doodleWaiting}</p>
             ) : (
-              <DoodleCanvas
-                onSubmit={(url) => void submitDoodle(url)}
-                submitLabel={ui.doodleDone}
-              />
+              <DoodleCanvas onSubmit={(url) => void submitDoodle(url)} submitLabel={ui.doodleDone} />
             )
           ) : (
             <p className="muted">{ui.fightTvHint}</p>
@@ -411,7 +602,7 @@ function RoomView({
             {ui.fightTitle} · {countdown}s · {ui.arena}: {room.arenaId}
           </h2>
           {(tvMode || !youPlaying) && (
-            <ArenaView fight={room.fight} players={room.players} wide={tvMode} />
+            <ArenaView fight={room.fight} players={room.players} wide={tvMode} shake={shake} />
           )}
           {youPlaying && !tvMode && (
             <>
@@ -464,12 +655,17 @@ function RoomView({
   )
 }
 
+type Screen = 'home' | 'join'
+
 export default function App() {
   const [lang, setLang] = useState<Lang>(() =>
     navigator.language.toLowerCase().startsWith('sv') ? 'sv' : 'en',
   )
+  const [screen, setScreen] = useState<Screen>('home')
+  const [joinCode, setJoinCode] = useState('')
   const [room, setRoom] = useState<PublicRoom | null>(null)
   const [playerId, setPlayerId] = useState<string | null>(null)
+  const [startInTv, setStartInTv] = useState(false)
   const [conn, setConn] = useState<ConnState>('connecting')
 
   useEffect(() => subscribeConnection(setConn), [])
@@ -483,6 +679,19 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const joinParam = params.get('join')
+    const joinCodeFromUrl =
+      joinParam && /^[A-Z]{4}$/i.test(joinParam) ? joinParam.toUpperCase() : null
+
+    if (joinCodeFromUrl) {
+      clearSession()
+      setJoinCode(joinCodeFromUrl)
+      setScreen('join')
+      window.history.replaceState({}, '', '/')
+      return
+    }
+
     const session = loadSession()
     if (!session) return
     void (async () => {
@@ -495,11 +704,12 @@ export default function App() {
     })()
   }, [])
 
-  function enter(r: PublicRoom, pid: string, name: string) {
+  function enter(r: PublicRoom, pid: string, name: string, opts?: { tv?: boolean }) {
     saveSession({ code: r.code, playerId: pid, name })
     setRoom(r)
     setPlayerId(pid)
     setLang(r.language)
+    setStartInTv(Boolean(opts?.tv))
     if (r.youAreHost) void setLanguage(lang)
   }
 
@@ -507,19 +717,42 @@ export default function App() {
 
   return (
     <div className="app">
-      <div className={`conn ${conn}`}>
+      <div className={`conn hide-on-tv ${conn}`}>
         {conn === 'connected' ? ui.connected : conn === 'connecting' ? ui.connecting : ui.disconnected}
       </div>
       {!room || !playerId ? (
-        <Home lang={lang} setLang={setLang} onCreated={enter} onJoined={enter} />
+        screen === 'join' ? (
+          <JoinScreen
+            lang={lang}
+            initialCode={joinCode}
+            onJoined={(r, pid, name) => enter(r, pid, name)}
+            onBack={() => {
+              setScreen('home')
+              setJoinCode('')
+            }}
+          />
+        ) : (
+          <Home
+            lang={lang}
+            setLang={setLang}
+            onCreated={(r, pid, name, hostPlays) => enter(r, pid, name, { tv: !hostPlays })}
+            onOpenJoin={(code) => {
+              setJoinCode(code ?? '')
+              setScreen('join')
+            }}
+          />
+        )
       ) : (
         <RoomView
           room={room}
           playerId={playerId}
           lang={lang}
+          initialTv={startInTv}
           onLeave={() => {
             setRoom(null)
             setPlayerId(null)
+            setStartInTv(false)
+            setScreen('home')
           }}
         />
       )}

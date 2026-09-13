@@ -25,11 +25,13 @@ export type FighterState = {
   vy: number
   facing: 1 | -1
   hp: number
+  grounded: boolean
   frozenUntil: number
   giantUntil: number
   invertUntil: number
   blindUntil: number
   punchCooldownUntil: number
+  hitFlashUntil: number
 }
 
 export type LootCrate = {
@@ -39,11 +41,20 @@ export type LootCrate = {
   ability: AbilityId
 }
 
+export type CombatEvent = {
+  kind: 'hit' | 'loot' | 'ability'
+  at: number
+  actorId: string
+  targetId?: string
+  ability?: AbilityId
+}
+
 export type FightSnapshot = {
   arenaId: ArenaId
   fighters: FighterState[]
   crates: LootCrate[]
   tick: number
+  shakeUntil: number
 }
 
 export type PublicRoom = {
@@ -61,6 +72,7 @@ export type PublicRoom = {
   phaseEndsAt: number
   arenaId: ArenaId
   fight: FightSnapshot | null
+  lastEvent: CombatEvent | null
   youAreHost: boolean
   youPlaying: boolean
   yourAbility: AbilityId | null
@@ -76,4 +88,13 @@ export type Session = {
   code: string
   playerId: string
   name: string
+}
+
+export type RoomPreview = {
+  code: string
+  language: Lang
+  status: string
+  playerCount: number
+  hostName: string
+  isPublic: boolean
 }

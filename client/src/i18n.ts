@@ -44,6 +44,17 @@ const sv = {
   how2: 'Rita din fighter och tryck Klar när du är nöjd',
   how3: 'Hoppa, slå och samla lootlådor i arenan',
   how4: 'Poängrace över korta rundor — mest kaos vinner',
+  joinTitle: 'Gå med',
+  joinCodeHint: 'Rum',
+  previewPlayers: 'spelare',
+  back: 'Tillbaka',
+  players: 'Spelare',
+  host: 'Värd',
+  spectator: 'TV',
+  offline: 'offline',
+  scanOnPhone: 'Skanna QR med mobilen',
+  lootGot: 'Loot!',
+  hitFlash: 'Träff!',
 }
 
 const en: typeof sv = {
@@ -90,6 +101,17 @@ const en: typeof sv = {
   how2: 'Doodle your fighter and tap Done when you like it',
   how3: 'Jump, punch, and grab loot crates in the arena',
   how4: 'Short score-race rounds — most chaos wins',
+  joinTitle: 'Join',
+  joinCodeHint: 'Room',
+  previewPlayers: 'players',
+  back: 'Back',
+  players: 'Players',
+  host: 'Host',
+  spectator: 'TV',
+  offline: 'offline',
+  scanOnPhone: 'Scan QR with your phone',
+  lootGot: 'Loot!',
+  hitFlash: 'Hit!',
 }
 
 export type UiCopy = typeof sv

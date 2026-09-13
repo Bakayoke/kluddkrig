@@ -63,6 +63,9 @@ body.tv-mode .app {
   text-align: center;
   padding: 2.5rem 0 1.5rem;
 }
+.hero.compact {
+  padding: 1.25rem 0 0.75rem;
+}
 
 .brand {
   font-family: var(--font-display);
@@ -281,6 +284,155 @@ body.tv-mode .app {
   justify-content: center;
   min-height: 70vh;
   text-align: center;
+}
+
+.hide-on-tv {
+  /* shown by default */
+}
+body.tv-mode .hide-on-tv {
+  display: none !important;
+}
+
+.tv-lobby-stage {
+  display: none;
+}
+body.tv-mode .tv-lobby-stage {
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: minmax(280px, 380px) 1fr;
+  align-items: start;
+  margin: 0.5rem 0 1.5rem;
+}
+@media (max-width: 900px) {
+  body.tv-mode .tv-lobby-stage {
+    grid-template-columns: 1fr;
+  }
+}
+
+.tv-lobby-qr {
+  text-align: center;
+  background: rgba(255, 246, 232, 0.1);
+  border: 2px solid rgba(255, 246, 232, 0.2);
+  border-radius: 20px;
+  padding: 1.25rem;
+}
+
+.tv-roster {
+  background: rgba(255, 246, 232, 0.92);
+  color: var(--ink);
+  border-radius: 18px;
+  padding: 1rem 1.15rem;
+  border: 3px solid rgba(26, 15, 46, 0.85);
+}
+.tv-roster h3 {
+  margin: 0 0 0.75rem;
+  font-family: var(--font-display);
+  font-size: 1.6rem;
+}
+.tv-roster-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 0.55rem;
+}
+.tv-roster-list li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.7rem 0.8rem;
+  border-radius: 12px;
+  background: #fff;
+  border: 2px solid var(--ink);
+}
+.tv-roster-list li.is-playing {
+  box-shadow: 3px 3px 0 var(--pink);
+}
+.tv-roster-list li.is-hosting {
+  box-shadow: 3px 3px 0 var(--cyan);
+}
+.tv-roster-list li.offline {
+  opacity: 0.5;
+}
+.tv-roster-name {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 1.25rem;
+}
+.tv-roster-meta {
+  opacity: 0.7;
+  font-size: 0.9rem;
+}
+
+.code-inline {
+  font-family: var(--font-display);
+  letter-spacing: 0.12em;
+  color: var(--yellow);
+}
+
+.combat-toast {
+  position: fixed;
+  top: 18%;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  padding: 0.75rem 1.25rem;
+  border-radius: 14px;
+  background: linear-gradient(120deg, var(--pink), var(--orange));
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 1.4rem;
+  font-weight: 700;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  animation: toast-pop 0.35s ease-out;
+  pointer-events: none;
+}
+
+@keyframes toast-pop {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-12px) scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+
+.room-shake {
+  animation: room-hit 0.28s ease-out;
+}
+@keyframes room-hit {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  25% {
+    transform: translate(-4px, 2px);
+  }
+  50% {
+    transform: translate(4px, -2px);
+  }
+  75% {
+    transform: translate(-2px, 1px);
+  }
+}
+
+.arena-canvas.shaking {
+  animation: arena-shake 0.28s ease-out;
+}
+@keyframes arena-shake {
+  0%,
+  100% {
+    transform: translate(0, 0);
+  }
+  30% {
+    transform: translate(-6px, 3px) rotate(-0.4deg);
+  }
+  60% {
+    transform: translate(5px, -2px) rotate(0.4deg);
+  }
 }
 
 .player-list {

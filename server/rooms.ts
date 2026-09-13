@@ -1,4 +1,17 @@
 import { customAlphabet } from 'nanoid'
+import {
+  ARENAS as ARENA_LAYOUTS,
+  FRICTION_AIR,
+  FRICTION_GROUND,
+  GRAVITY,
+  JUMP_V,
+  MAX_FALL,
+  MOVE_AIR,
+  MOVE_GROUND,
+  clampX,
+  inPit,
+  resolveVertical,
+} from './arena.js'
 import type {
   AbilityId,
   ArenaId,
@@ -20,7 +33,7 @@ export const DEFAULT_FIGHT_SECONDS = 75
 export const DEFAULT_MAX_ROUNDS = 3
 export const RESULTS_MS = 12_000
 
-const ARENAS: ArenaId[] = ['platforms', 'pit', 'bridge']
+const ARENA_IDS: ArenaId[] = ['platforms', 'pit', 'bridge']
 const ABILITIES: AbilityId[] = ['teleport', 'freeze', 'invert', 'giant', 'inkblot']
 
 const DISCONNECT_GRACE_MS = 60_000
@@ -65,26 +78,32 @@ function playingPlayers(room: Room) {
 }
 
 function pickArena(exclude?: ArenaId): ArenaId {
-  const pool = exclude ? ARENAS.filter((a) => a !== exclude) : ARENAS
+  const pool = exclude ? ARENA_IDS.filter((a) => a !== exclude) : ARENA_IDS
   return pool[Math.floor(Math.random() * pool.length)] ?? 'platforms'
 }
 
 function spawnFighters(room: Room): FighterState[] {
+  const layout = ARENA_LAYOUTS[room.arenaId]
   const players = playingPlayers(room)
-  return players.map((p, i) => ({
-    playerId: p.id,
-    x: 120 + i * 100,
-    y: 280,
-    vx: 0,
-    vy: 0,
-    facing: 1 as const,
-    hp: 100,
-    frozenUntil: 0,
-    giantUntil: 0,
-    invertUntil: 0,
-    blindUntil: 0,
-    punchCooldownUntil: 0,
-  }))
+  return players.map((p, i) => {
+    const spawn = layout.spawns[i % layout.spawns.length]!
+    return {
+      playerId: p.id,
+      x: spawn.x,
+      y: spawn.y,
+      vx: 0,
+      vy: 0,
+      facing: (spawn.x < 400 ? 1 : -1) as 1 | -1,
+      hp: 100,
+      grounded: true,
+      frozenUntil: 0,
+      giantUntil: 0,
+      invertUntil: 0,
+      blindUntil: 0,
+      punchCooldownUntil: 0,
+      hitFlashUntil: 0,
+    }
+  })
 }
 
 function emptyFight(room: Room): FightSnapshot {
@@ -93,7 +112,19 @@ function emptyFight(room: Room): FightSnapshot {
     fighters: spawnFighters(room),
     crates: [],
     tick: 0,
+    shakeUntil: 0,
   }
+}
+
+function respawnFighter(f: FighterState, arenaId: ArenaId) {
+  const layout = ARENA_LAYOUTS[arenaId]
+  const spawn = layout.spawns[Math.floor(Math.random() * layout.spawns.length)]!
+  f.x = spawn.x
+  f.y = spawn.y
+  f.vx = 0
+  f.vy = 0
+  f.grounded = true
+  f.hp = Math.max(20, f.hp - 15)
 }
 
 export function allRooms() {
@@ -143,6 +174,7 @@ export function createRoom(
     phaseEndsAt: 0,
     arenaId: 'platforms',
     fight: null,
+    lastEvent: null,
     updatedAt: Date.now(),
   }
 
@@ -311,6 +343,7 @@ function beginDoodle(room: Room) {
 function beginFight(room: Room) {
   room.status = 'fight'
   room.fight = emptyFight(room)
+  room.lastEvent = null
   room.phaseEndsAt = Date.now() + room.fightSeconds * 1000
   touch(room)
 }
@@ -393,30 +426,37 @@ export function playerInput(
 
   let move = input.move ?? 0
   if (fighter.invertUntil > now) move = (-move) as -1 | 0 | 1
+  const speed = fighter.grounded ? MOVE_GROUND : MOVE_AIR
   if (move !== 0) {
-    fighter.vx = move * (fighter.giantUntil > now ? 4 : 6)
+    fighter.vx = move * (fighter.giantUntil > now ? speed * 0.85 : speed)
     fighter.facing = move > 0 ? 1 : -1
-  } else {
-    fighter.vx *= 0.7
   }
 
-  if (input.jump) {
-    fighter.vy = -12
+  if (input.jump && fighter.grounded) {
+    fighter.vy = JUMP_V
+    fighter.grounded = false
   }
 
+  let didHit = false
   if (input.punch && fighter.punchCooldownUntil <= now) {
-    fighter.punchCooldownUntil = now + 400
-    // Simple hit check placeholder
+    fighter.punchCooldownUntil = now + 380
     for (const other of room.fight.fighters) {
       if (other.playerId === playerId) continue
       const dx = other.x - fighter.x
       const dy = other.y - fighter.y
-      const reach = fighter.giantUntil > now ? 80 : 50
-      if (Math.abs(dx) < reach && Math.abs(dy) < 40 && Math.sign(dx) === fighter.facing) {
-        other.hp = Math.max(0, other.hp - (fighter.giantUntil > now ? 18 : 10))
-        other.vx += fighter.facing * 8
+      const reach = fighter.giantUntil > now ? 78 : 52
+      if (Math.abs(dx) < reach && Math.abs(dy) < 46 && Math.sign(dx || fighter.facing) === fighter.facing) {
+        const dmg = fighter.giantUntil > now ? 16 : 10
+        other.hp = Math.max(0, other.hp - dmg)
+        other.vx += fighter.facing * 9
+        other.vy = Math.min(other.vy, -4)
+        other.hitFlashUntil = now + 220
+        other.grounded = false
+        didHit = true
         const attacker = room.players.find((p) => p.id === playerId)
         if (attacker) attacker.score += 1
+        room.lastEvent = { kind: 'hit', at: now, actorId: playerId, targetId: other.playerId }
+        room.fight.shakeUntil = now + 280
       }
     }
   }
@@ -424,25 +464,34 @@ export function playerInput(
   if (input.ability) {
     const player = room.players.find((p) => p.id === playerId)
     if (player?.ability) {
-      applyAbility(room, playerId, player.ability)
+      const ability = player.ability
+      applyAbility(room, playerId, ability)
       player.ability = null
+      room.lastEvent = { kind: 'ability', at: now, actorId: playerId, ability }
+      room.fight.shakeUntil = now + 200
     }
   }
 
-  touch(room)
+  if (didHit || input.ability) touch(room)
+  else touch(room)
   return room
 }
 
 function applyAbility(room: Room, fromId: string, ability: AbilityId) {
   if (!room.fight) return
   const now = Date.now()
+  const layout = ARENA_LAYOUTS[room.arenaId]
   const others = room.fight.fighters.filter((f) => f.playerId !== fromId)
   const pick = others[Math.floor(Math.random() * others.length)]
   switch (ability) {
     case 'teleport':
       if (pick) {
-        pick.x = 80 + Math.random() * 640
-        pick.y = 80 + Math.random() * 240
+        const spot = layout.spawns[Math.floor(Math.random() * layout.spawns.length)]!
+        pick.x = spot.x
+        pick.y = spot.y
+        pick.vx = 0
+        pick.vy = 0
+        pick.hitFlashUntil = now + 300
       }
       break
     case 'freeze':
@@ -457,42 +506,64 @@ function applyAbility(room: Room, fromId: string, ability: AbilityId) {
       break
     }
     case 'inkblot':
-      if (pick) pick.blindUntil = now + 3000
+      if (pick) {
+        pick.blindUntil = now + 3000
+        pick.hitFlashUntil = now + 300
+      }
       break
   }
 }
 
-/** Lightweight placeholder tick — real physics comes later */
+/** Physics tick ~20 Hz */
 export function tickFight(room: Room) {
   if (room.status !== 'fight' || !room.fight) return
   const fight = room.fight
+  const layout = ARENA_LAYOUTS[fight.arenaId]
   fight.tick += 1
+  const now = Date.now()
 
   for (const f of fight.fighters) {
-    f.x += f.vx
-    f.y += f.vy
-    f.vy += 0.6
-    if (f.y > 320) {
-      f.y = 320
+    if (f.frozenUntil > now) {
+      f.vx = 0
       f.vy = 0
+      continue
     }
-    f.x = Math.max(40, Math.min(760, f.x))
+
+    f.vy = Math.min(MAX_FALL, f.vy + GRAVITY)
+    f.x = clampX(f.x + f.vx)
+    const nextY = f.y + f.vy
+    const resolved = resolveVertical(f.x, nextY, f.vy, layout)
+    f.y = resolved.y
+    f.vy = resolved.vy
+    f.grounded = resolved.grounded
+
+    if (f.grounded) f.vx *= FRICTION_GROUND
+    else f.vx *= FRICTION_AIR
+
+    if (inPit(f.x, f.y, layout) || f.y > 420) {
+      respawnFighter(f, fight.arenaId)
+      room.lastEvent = { kind: 'hit', at: now, actorId: f.playerId, targetId: f.playerId }
+      fight.shakeUntil = now + 320
+    }
   }
 
-  // Spawn loot occasionally
-  if (fight.tick % 100 === 0 && fight.crates.length < 3) {
-    fight.crates.push({
-      id: crypto.randomUUID(),
-      x: 100 + Math.random() * 600,
-      y: 280,
-      ability: ABILITIES[Math.floor(Math.random() * ABILITIES.length)]!,
-    })
+  // Spawn loot on platforms
+  if (fight.tick % 90 === 0 && fight.crates.length < 3) {
+    const spot = layout.crateSpots[Math.floor(Math.random() * layout.crateSpots.length)]!
+    const cluttered = fight.crates.some((c) => Math.abs(c.x - spot.x) < 40)
+    if (!cluttered) {
+      fight.crates.push({
+        id: crypto.randomUUID(),
+        x: spot.x,
+        y: spot.y - 18,
+        ability: ABILITIES[Math.floor(Math.random() * ABILITIES.length)]!,
+      })
+    }
   }
 
-  // Pickup crates
   for (const f of fight.fighters) {
     const idx = fight.crates.findIndex(
-      (c) => Math.abs(c.x - f.x) < 30 && Math.abs(c.y - f.y) < 40,
+      (c) => Math.abs(c.x - f.x) < 32 && Math.abs(c.y - (f.y - 24)) < 40,
     )
     if (idx >= 0) {
       const crate = fight.crates[idx]!
@@ -500,6 +571,12 @@ export function tickFight(room: Room) {
       if (player && !player.ability) {
         player.ability = crate.ability
         fight.crates.splice(idx, 1)
+        room.lastEvent = {
+          kind: 'loot',
+          at: now,
+          actorId: f.playerId,
+          ability: crate.ability,
+        }
       }
     }
   }
@@ -555,6 +632,7 @@ export function rematch(code: string, playerId: string) {
     p.ability = null
     p.doodleDone = false
   }
+  room.lastEvent = null
   touch(room)
   return room
 }
@@ -577,6 +655,7 @@ export function hydrateRooms(list: Room[]) {
   for (const room of list) {
     rooms.set(room.code, {
       ...room,
+      lastEvent: room.lastEvent ?? null,
       players: room.players.map((p) => ({ ...p, connected: false })),
       fight: room.status === 'fight' ? room.fight : null,
     })
@@ -628,6 +707,7 @@ export function toPublicRoom(room: Room, viewerId: string): PublicRoom {
     phaseEndsAt: room.phaseEndsAt,
     arenaId: room.arenaId,
     fight: room.fight,
+    lastEvent: room.lastEvent,
     youAreHost: room.hostId === viewerId,
     youPlaying: Boolean(you?.playing),
     yourAbility: you?.ability ?? null,
