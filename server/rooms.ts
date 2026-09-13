@@ -303,7 +303,8 @@ function beginDoodle(room: Room) {
     p.ability = null
     p.doodleDone = !p.playing
   }
-  room.phaseEndsAt = Date.now() + room.doodleSeconds * 1000
+  // No doodle timer — fight starts when every playing player marks ready
+  room.phaseEndsAt = 0
   touch(room)
 }
 
@@ -507,13 +508,8 @@ export function tickFight(room: Room) {
 }
 
 export function onPhaseTimeout(room: Room) {
-  if (room.status === 'doodle') {
-    for (const p of playingPlayers(room)) {
-      if (!p.doodleDone) p.doodleDone = true
-    }
-    beginFight(room)
-    return
-  }
+  // Doodle has no timeout — players ready up individually via submitDoodle
+  if (room.status === 'doodle') return
   if (room.status === 'fight') {
     beginResults(room)
     return

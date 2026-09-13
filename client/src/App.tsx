@@ -368,11 +368,12 @@ function RoomView({
 
       {room.status === 'doodle' && (
         <section className="phase">
-          <h2>
-            {ui.doodleTitle} · {countdown}s
-          </h2>
+          <h2>{ui.doodleTitle}</h2>
           <p className="muted">
             {fmt(ui.round, { n: room.roundIndex, max: room.maxRounds })} — {ui.doodleHint}
+          </p>
+          <p className="muted">
+            {fmt(ui.doodleReady, { done: room.doodleDoneCount, need: room.doodleNeeded })}
           </p>
           {tvMode ? (
             <div className="avatar-grid">

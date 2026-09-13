@@ -7,7 +7,7 @@ Färgglad party-brawler — rita din fighter, styr via mobilen, dunka kompisarna
 ## Koncept (hybrid)
 
 1. **Lobby** — skapa rum, visa QR på stor skärm, spelare går med via mobilen  
-2. **Doodle (10–15 s)** — varje spelare ritar en snabb avatar som syns i arenan  
+2. **Doodle** — varje spelare ritar en avatar och trycker Klar när man är nöjd (ingen tidsgräns)  
 3. **Fight (≈75 s)** — hoppa, slå, styr; samla lootlådor för sabotage-abilities  
 4. **Results** — poängrace över flera korta rundor (inte last-man-standing)
 
