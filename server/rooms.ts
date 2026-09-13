@@ -1,6 +1,7 @@
 import { customAlphabet } from 'nanoid'
 import {
   ARENAS as ARENA_LAYOUTS,
+  COYOTE_MS,
   FRICTION_AIR,
   FRICTION_GROUND,
   GRAVITY,
@@ -96,6 +97,7 @@ function spawnFighters(room: Room): FighterState[] {
       facing: (spawn.x < 400 ? 1 : -1) as 1 | -1,
       hp: 100,
       grounded: true,
+      coyoteUntil: 0,
       frozenUntil: 0,
       giantUntil: 0,
       invertUntil: 0,
@@ -124,6 +126,7 @@ function respawnFighter(f: FighterState, arenaId: ArenaId) {
   f.vx = 0
   f.vy = 0
   f.grounded = true
+  f.coyoteUntil = Date.now() + COYOTE_MS
   f.hp = Math.max(20, f.hp - 15)
 }
 
@@ -330,6 +333,7 @@ function beginDoodle(room: Room) {
   room.roundIndex += 1
   room.arenaId = pickArena(room.arenaId)
   room.fight = null
+  room.lastEvent = null
   for (const p of room.players) {
     p.avatarDataUrl = null
     p.ability = null
@@ -338,6 +342,19 @@ function beginDoodle(room: Room) {
   // No doodle timer — fight starts when every playing player marks ready
   room.phaseEndsAt = 0
   touch(room)
+}
+
+function pushEvent(
+  room: Room,
+  event: Omit<import('./types.js').CombatEvent, 'seq' | 'at'> & { at?: number },
+) {
+  const seq = (room.lastEvent?.seq ?? 0) + 1
+  room.lastEvent = {
+    ...event,
+    at: event.at ?? Date.now(),
+    seq,
+    actorName: event.actorName,
+  }
 }
 
 function beginFight(room: Room) {
@@ -420,6 +437,7 @@ export function playerInput(
   if (room.status !== 'fight' || !room.fight) return { error: 'Inte fight-fas' }
   const fighter = room.fight.fighters.find((f) => f.playerId === playerId)
   if (!fighter) return { error: 'Ingen fighter' }
+  const actor = room.players.find((p) => p.id === playerId)
 
   const now = Date.now()
   if (fighter.frozenUntil > now) return room
@@ -432,12 +450,13 @@ export function playerInput(
     fighter.facing = move > 0 ? 1 : -1
   }
 
-  if (input.jump && fighter.grounded) {
+  const canJump = fighter.grounded || fighter.coyoteUntil > now
+  if (input.jump && canJump) {
     fighter.vy = JUMP_V
     fighter.grounded = false
+    fighter.coyoteUntil = 0
   }
 
-  let didHit = false
   if (input.punch && fighter.punchCooldownUntil <= now) {
     fighter.punchCooldownUntil = now + 380
     for (const other of room.fight.fighters) {
@@ -445,18 +464,25 @@ export function playerInput(
       const dx = other.x - fighter.x
       const dy = other.y - fighter.y
       const reach = fighter.giantUntil > now ? 78 : 52
-      if (Math.abs(dx) < reach && Math.abs(dy) < 46 && Math.sign(dx || fighter.facing) === fighter.facing) {
+      if (Math.abs(dx) < reach && Math.abs(dy) < 50 && Math.sign(dx || fighter.facing) === fighter.facing) {
         const dmg = fighter.giantUntil > now ? 16 : 10
         other.hp = Math.max(0, other.hp - dmg)
-        other.vx += fighter.facing * 9
-        other.vy = Math.min(other.vy, -4)
-        other.hitFlashUntil = now + 220
+        other.vx += fighter.facing * 10
+        other.vy = Math.min(other.vy, -5)
+        other.hitFlashUntil = now + 350
         other.grounded = false
-        didHit = true
-        const attacker = room.players.find((p) => p.id === playerId)
-        if (attacker) attacker.score += 1
-        room.lastEvent = { kind: 'hit', at: now, actorId: playerId, targetId: other.playerId }
-        room.fight.shakeUntil = now + 280
+        other.coyoteUntil = 0
+        if (actor) actor.score += 1
+        const target = room.players.find((p) => p.id === other.playerId)
+        pushEvent(room, {
+          kind: 'hit',
+          actorId: playerId,
+          actorName: actor?.name ?? '?',
+          targetId: other.playerId,
+          targetName: target?.name ?? '?',
+          damage: dmg,
+        })
+        room.fight.shakeUntil = now + 350
       }
     }
   }
@@ -465,20 +491,27 @@ export function playerInput(
     const player = room.players.find((p) => p.id === playerId)
     if (player?.ability) {
       const ability = player.ability
-      applyAbility(room, playerId, ability)
+      const targetId = applyAbility(room, playerId, ability)
       player.ability = null
-      room.lastEvent = { kind: 'ability', at: now, actorId: playerId, ability }
-      room.fight.shakeUntil = now + 200
+      const target = targetId ? room.players.find((p) => p.id === targetId) : undefined
+      pushEvent(room, {
+        kind: 'ability',
+        actorId: playerId,
+        actorName: actor?.name ?? '?',
+        targetId: targetId ?? undefined,
+        targetName: target?.name,
+        ability,
+      })
+      room.fight.shakeUntil = now + 280
     }
   }
 
-  if (didHit || input.ability) touch(room)
-  else touch(room)
+  touch(room)
   return room
 }
 
-function applyAbility(room: Room, fromId: string, ability: AbilityId) {
-  if (!room.fight) return
+function applyAbility(room: Room, fromId: string, ability: AbilityId): string | null {
+  if (!room.fight) return null
   const now = Date.now()
   const layout = ARENA_LAYOUTS[room.arenaId]
   const others = room.fight.fighters.filter((f) => f.playerId !== fromId)
@@ -491,27 +524,36 @@ function applyAbility(room: Room, fromId: string, ability: AbilityId) {
         pick.y = spot.y
         pick.vx = 0
         pick.vy = 0
-        pick.hitFlashUntil = now + 300
+        pick.hitFlashUntil = now + 400
+        return pick.playerId
       }
       break
     case 'freeze':
-      if (pick) pick.frozenUntil = now + 2500
+      if (pick) {
+        pick.frozenUntil = now + 2500
+        return pick.playerId
+      }
       break
     case 'invert':
-      if (pick) pick.invertUntil = now + 4000
+      if (pick) {
+        pick.invertUntil = now + 4000
+        return pick.playerId
+      }
       break
     case 'giant': {
       const self = room.fight.fighters.find((f) => f.playerId === fromId)
       if (self) self.giantUntil = now + 5000
-      break
+      return fromId
     }
     case 'inkblot':
       if (pick) {
         pick.blindUntil = now + 3000
-        pick.hitFlashUntil = now + 300
+        pick.hitFlashUntil = now + 400
+        return pick.playerId
       }
       break
   }
+  return null
 }
 
 /** Physics tick ~20 Hz */
@@ -535,19 +577,31 @@ export function tickFight(room: Room) {
     const resolved = resolveVertical(f.x, nextY, f.vy, layout)
     f.y = resolved.y
     f.vy = resolved.vy
-    f.grounded = resolved.grounded
+    if (resolved.grounded) {
+      f.grounded = true
+      f.coyoteUntil = now + COYOTE_MS
+    } else {
+      f.grounded = false
+    }
 
     if (f.grounded) f.vx *= FRICTION_GROUND
     else f.vx *= FRICTION_AIR
 
-    if (inPit(f.x, f.y, layout) || f.y > 420) {
+    if (inPit(f.x, f.y, layout) || f.y > 430) {
       respawnFighter(f, fight.arenaId)
-      room.lastEvent = { kind: 'hit', at: now, actorId: f.playerId, targetId: f.playerId }
+      const name = room.players.find((p) => p.id === f.playerId)?.name ?? '?'
+      pushEvent(room, {
+        kind: 'hit',
+        actorId: f.playerId,
+        actorName: name,
+        targetId: f.playerId,
+        targetName: name,
+        damage: 15,
+      })
       fight.shakeUntil = now + 320
     }
   }
 
-  // Spawn loot on platforms
   if (fight.tick % 90 === 0 && fight.crates.length < 3) {
     const spot = layout.crateSpots[Math.floor(Math.random() * layout.crateSpots.length)]!
     const cluttered = fight.crates.some((c) => Math.abs(c.x - spot.x) < 40)
@@ -563,7 +617,7 @@ export function tickFight(room: Room) {
 
   for (const f of fight.fighters) {
     const idx = fight.crates.findIndex(
-      (c) => Math.abs(c.x - f.x) < 32 && Math.abs(c.y - (f.y - 24)) < 40,
+      (c) => Math.abs(c.x - f.x) < 36 && Math.abs(c.y - (f.y - 24)) < 44,
     )
     if (idx >= 0) {
       const crate = fight.crates[idx]!
@@ -571,12 +625,13 @@ export function tickFight(room: Room) {
       if (player && !player.ability) {
         player.ability = crate.ability
         fight.crates.splice(idx, 1)
-        room.lastEvent = {
+        pushEvent(room, {
           kind: 'loot',
-          at: now,
           actorId: f.playerId,
+          actorName: player.name,
           ability: crate.ability,
-        }
+        })
+        fight.shakeUntil = now + 200
       }
     }
   }
@@ -586,7 +641,10 @@ export function tickFight(room: Room) {
 
 export function onPhaseTimeout(room: Room) {
   // Doodle has no timeout — players ready up individually via submitDoodle
-  if (room.status === 'doodle') return
+  if (room.status === 'doodle') {
+    room.phaseEndsAt = 0
+    return
+  }
   if (room.status === 'fight') {
     beginResults(room)
     return
@@ -607,7 +665,12 @@ export function roomsNeedingTick(): Room[] {
   const now = Date.now()
   const out: Room[] = []
   for (const room of rooms.values()) {
-    if (room.phaseEndsAt > 0 && room.phaseEndsAt <= now && room.status !== 'lobby') {
+    if (
+      room.phaseEndsAt > 0 &&
+      room.phaseEndsAt <= now &&
+      room.status !== 'lobby' &&
+      room.status !== 'doodle'
+    ) {
       out.push(room)
     }
   }
@@ -704,7 +767,7 @@ export function toPublicRoom(room: Room, viewerId: string): PublicRoom {
     maxRounds: room.maxRounds,
     fightSeconds: room.fightSeconds,
     doodleSeconds: room.doodleSeconds,
-    phaseEndsAt: room.phaseEndsAt,
+    phaseEndsAt: room.status === 'doodle' ? 0 : room.phaseEndsAt,
     arenaId: room.arenaId,
     fight: room.fight,
     lastEvent: room.lastEvent,

@@ -413,9 +413,10 @@ function RoomView({
   const ui = t(lang)
   const [tvMode, setTvMode] = useState(Boolean(initialTv))
   const [fsActive, setFsActive] = useState(() => isFullscreenActive())
-  const [toast, setToast] = useState<string | null>(null)
+  const [toast, setToast] = useState<{ text: string; kind: string } | null>(null)
+  const [flash, setFlash] = useState<string | null>(null)
   const [shake, setShake] = useState(false)
-  const lastEventAt = useRef(0)
+  const lastEventSeq = useRef(0)
   const countdown = useCountdown(room.phaseEndsAt)
   const joinUrl = `${window.location.origin}?join=${room.code}`
 
@@ -448,33 +449,60 @@ function RoomView({
 
   useEffect(() => {
     const ev = room.lastEvent
-    if (!ev || ev.at <= lastEventAt.current) return
-    lastEventAt.current = ev.at
+    if (!ev || ev.seq <= lastEventSeq.current) return
+    lastEventSeq.current = ev.seq
     const involvesYou = ev.actorId === playerId || ev.targetId === playerId
+    const abilityName = ev.ability ? ui.abilityLabels[ev.ability] : ''
+
     if (ev.kind === 'hit') {
-      if (involvesYou) vibrate([30, 40, 55])
+      const text = fmt(ui.hitMsg, { actor: ev.actorName, target: ev.targetName ?? '?' })
+      setToast({ text, kind: 'hit' })
       setShake(true)
-      setToast(ui.hitFlash)
-      const t1 = setTimeout(() => setShake(false), 280)
-      const t2 = setTimeout(() => setToast(null), 900)
+      if (involvesYou) {
+        vibrate(ev.targetId === playerId ? [50, 40, 80] : [25, 30, 40])
+        setFlash(ev.targetId === playerId ? 'hurt' : 'hit')
+      }
+      const t1 = setTimeout(() => setShake(false), 320)
+      const t2 = setTimeout(() => setToast(null), 1600)
+      const t3 = setTimeout(() => setFlash(null), 280)
       return () => {
         clearTimeout(t1)
         clearTimeout(t2)
+        clearTimeout(t3)
       }
     }
-    if (ev.kind === 'loot' && ev.actorId === playerId) {
-      vibrate([20, 30, 20])
-      setToast(`${ui.lootGot} ${ev.ability ?? ''}`)
-      const t2 = setTimeout(() => setToast(null), 1100)
-      return () => clearTimeout(t2)
+    if (ev.kind === 'loot') {
+      const text = fmt(ui.lootMsg, { actor: ev.actorName, ability: abilityName })
+      setToast({ text, kind: 'loot' })
+      if (ev.actorId === playerId) {
+        vibrate([30, 40, 30, 40, 60])
+        setFlash('loot')
+      }
+      const t2 = setTimeout(() => setToast(null), 1800)
+      const t3 = setTimeout(() => setFlash(null), 400)
+      return () => {
+        clearTimeout(t2)
+        clearTimeout(t3)
+      }
     }
-    if (ev.kind === 'ability' && involvesYou) {
-      vibrate([40, 20, 40])
+    if (ev.kind === 'ability') {
+      const text = fmt(ui.abilityMsg, { actor: ev.actorName, ability: abilityName })
+      setToast({ text, kind: 'ability' })
       setShake(true)
-      const t1 = setTimeout(() => setShake(false), 220)
-      return () => clearTimeout(t1)
+      if (involvesYou) {
+        vibrate([60, 30, 60])
+        setFlash('ability')
+      }
+      const t1 = setTimeout(() => setShake(false), 280)
+      const t2 = setTimeout(() => setToast(null), 1800)
+      const t3 = setTimeout(() => setFlash(null), 350)
+      return () => {
+        clearTimeout(t1)
+        clearTimeout(t2)
+        clearTimeout(t3)
+      }
     }
-  }, [room.lastEvent, playerId, ui.hitFlash, ui.lootGot])
+  }, [room.lastEvent, playerId, ui])
 
   async function toggleTvMode() {
     if (tvMode) {
@@ -522,7 +550,8 @@ function RoomView({
         </div>
       </header>
 
-      {toast && <div className="combat-toast">{toast}</div>}
+      {toast && <div className={`combat-toast kind-${toast.kind}`}>{toast.text}</div>}
+      {flash && <div className={`screen-flash flash-${flash}`} aria-hidden />}
 
       {room.status === 'lobby' && (
         <>
@@ -668,10 +697,33 @@ function RoomView({
           )}
           {youPlaying && !tvMode && (
             <>
+              <div className="fight-hud">
+                {(() => {
+                  const me = room.fight.fighters.find((f) => f.playerId === playerId)
+                  const hp = me?.hp ?? 0
+                  return (
+                    <div className="hp-bar">
+                      <span>
+                        {ui.yourHp} {hp}
+                      </span>
+                      <div className="hp-track">
+                        <div className="hp-fill" style={{ width: `${hp}%` }} />
+                      </div>
+                    </div>
+                  )
+                })()}
+                <div className={`loot-chip${room.yourAbility ? ' ready' : ''}`}>
+                  {room.yourAbility
+                    ? `${ui.ability}: ${ui.abilityLabels[room.yourAbility]}`
+                    : ui.noAbility}
+                </div>
+              </div>
               <p className="muted">{ui.fightTvHint}</p>
               <FightPad
                 hasAbility={Boolean(room.yourAbility)}
-                abilityLabel={`${ui.ability}: ${room.yourAbility ?? ''}`}
+                abilityLabel={
+                  room.yourAbility ? ui.abilityLabels[room.yourAbility] : ui.ability
+                }
                 noAbilityLabel={ui.noAbility}
               />
             </>

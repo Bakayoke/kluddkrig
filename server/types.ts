@@ -33,6 +33,7 @@ export type FighterState = {
   facing: 1 | -1
   hp: number
   grounded: boolean
+  coyoteUntil: number
   frozenUntil: number
   giantUntil: number
   invertUntil: number
@@ -52,9 +53,13 @@ export type LootCrate = {
 export type CombatEvent = {
   kind: 'hit' | 'loot' | 'ability'
   at: number
+  seq: number
   actorId: string
+  actorName: string
   targetId?: string
+  targetName?: string
   ability?: AbilityId
+  damage?: number
 }
 
 export type FightSnapshot = {

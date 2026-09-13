@@ -56,6 +56,17 @@ const sv = {
   scanOnPhone: 'Skanna QR med mobilen',
   lootGot: 'Loot!',
   hitFlash: 'Träff!',
+  hitMsg: '{actor} träffade {target}!',
+  lootMsg: '{actor} fick {ability}!',
+  abilityMsg: '{actor} använde {ability}!',
+  yourHp: 'HP',
+  abilityLabels: {
+    teleport: 'Teleport',
+    freeze: 'Frys',
+    invert: 'Invert',
+    giant: 'Jätte',
+    inkblot: 'Bläck',
+  },
 }
 
 const en: typeof sv = {
@@ -114,6 +125,17 @@ const en: typeof sv = {
   scanOnPhone: 'Scan QR with your phone',
   lootGot: 'Loot!',
   hitFlash: 'Hit!',
+  hitMsg: '{actor} hit {target}!',
+  lootMsg: '{actor} got {ability}!',
+  abilityMsg: '{actor} used {ability}!',
+  yourHp: 'HP',
+  abilityLabels: {
+    teleport: 'Teleport',
+    freeze: 'Freeze',
+    invert: 'Invert',
+    giant: 'Giant',
+    inkblot: 'Inkblot',
+  },
 }
 
 export type UiCopy = typeof sv
