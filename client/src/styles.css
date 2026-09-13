@@ -42,6 +42,9 @@ body.tv-mode {
 body.pad-mode {
   overflow: hidden;
   touch-action: none;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 body.pad-mode .app {
   padding: 0;
@@ -68,6 +71,18 @@ body.pad-mode .fight-phase {
   flex-direction: column;
   gap: 0.35rem;
 }
+body.pad-mode .fight-controls {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+body.pad-mode .fight-controls.locked {
+  visibility: hidden;
+  pointer-events: none;
+  position: absolute;
+}
 body.pad-mode .fight-hud {
   margin: 0;
   flex-shrink: 0;
@@ -78,6 +93,36 @@ body.pad-mode .pad.gamepad {
   min-height: 0;
   align-items: center;
   padding: 0;
+}
+.pad-unlock {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  border: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 1.5rem;
+  background:
+    radial-gradient(ellipse 70% 50% at 50% 40%, rgba(92, 225, 230, 0.35), transparent 60%),
+    linear-gradient(165deg, #1a0f2e, #2d1848);
+  color: var(--paper);
+  font-family: var(--font-display);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.pad-unlock strong {
+  font-size: clamp(1.4rem, 5vw, 2rem);
+  font-weight: 700;
+}
+.pad-unlock span {
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  opacity: 0.8;
+  max-width: 16rem;
+  text-align: center;
 }
 body.pad-mode .combat-toast {
   top: max(0.5rem, env(safe-area-inset-top));

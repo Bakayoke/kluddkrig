@@ -117,19 +117,26 @@ export const ARENAS: Record<ArenaId, ArenaLayout> = {
   },
 }
 
-/** Snappy jump: ~170px height → reaches mid platforms easily */
-export const GRAVITY = 1.2
-export const JUMP_V = -20
-export const MAX_FALL = 22
-export const MOVE_GROUND = 6.5
-export const MOVE_AIR = 5.2
+/** Mario/Sonic-ish: accel run, snappy jump, heavier fall */
+export const GRAVITY_UP = 0.95
+export const GRAVITY_DOWN = 1.75
+export const GRAVITY = GRAVITY_DOWN
+export const JUMP_V = -17.8
+export const MAX_FALL = 19
+export const MAX_RUN = 8.4
+export const ACCEL_GROUND = 1.15
+export const ACCEL_AIR = 0.7
 export const FRICTION_GROUND = 0.78
-export const FRICTION_AIR = 0.94
-export const COYOTE_MS = 120
+export const FRICTION_AIR = 0.95
+export const COYOTE_MS = 110
+export const JUMP_BUFFER_MS = 120
+/** Legacy aliases used by older imports */
+export const MOVE_GROUND = MAX_RUN
+export const MOVE_AIR = MAX_RUN * 0.85
 
 /**
- * Land on the highest platform whose top we crossed this frame.
- * `feetY` is the proposed new feet position; `vy` is current vertical velocity.
+ * One-way platforms: land when falling onto a top; never block from below.
+ * (Jump straight through platforms underfoot — Mario-style.)
  */
 export function resolveVertical(
   feetX: number,
@@ -143,29 +150,15 @@ export function resolveVertical(
   let v = vy
   let grounded = false
 
+  // Only land while falling / resting — ascending passes through
   if (v >= 0) {
-    // Highest platforms first (smallest y)
     const ordered = [...layout.platforms].sort((a, b) => a.y - b.y)
     for (const p of ordered) {
       const overlappingX = feetX + halfW > p.x + 2 && feetX - halfW < p.x + p.w - 2
-      // Crossed or resting on this top while falling / standing
       if (overlappingX && prevY <= p.y + 1 && feetY >= p.y) {
         y = p.y
         v = 0
         grounded = true
-        break
-      }
-    }
-  } else {
-    // Hit ceiling with head
-    for (const p of layout.platforms) {
-      const bottom = p.y + p.h
-      const overlappingX = feetX + halfW > p.x && feetX - halfW < p.x + p.w
-      const prevHead = prevY - FIGHTER_H
-      const head = y - FIGHTER_H
-      if (overlappingX && prevHead >= bottom && head <= bottom) {
-        y = bottom + FIGHTER_H
-        v = 0
         break
       }
     }

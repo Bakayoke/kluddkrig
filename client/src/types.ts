@@ -30,6 +30,8 @@ export type FighterState = {
   hp: number
   grounded: boolean
   coyoteUntil: number
+  jumpHeld?: boolean
+  jumpBufferUntil?: number
   frozenUntil: number
   giantUntil: number
   invertUntil: number

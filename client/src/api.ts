@@ -206,6 +206,7 @@ export async function submitDoodle(imageDataUrl: string) {
 export async function sendInput(input: {
   move?: -1 | 0 | 1
   jump?: boolean
+  jumpRelease?: boolean
   punch?: boolean
   ability?: boolean
 }) {

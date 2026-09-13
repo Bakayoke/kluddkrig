@@ -2,13 +2,17 @@ import { customAlphabet } from 'nanoid'
 import {
   ARENAS as ARENA_LAYOUTS,
   ARENA_W,
+  ACCEL_AIR,
+  ACCEL_GROUND,
   COYOTE_MS,
   FRICTION_AIR,
-  GRAVITY,
+  FRICTION_GROUND,
+  GRAVITY_DOWN,
+  GRAVITY_UP,
+  JUMP_BUFFER_MS,
   JUMP_V,
   MAX_FALL,
-  MOVE_AIR,
-  MOVE_GROUND,
+  MAX_RUN,
   clampX,
   inPit,
   resolveVertical,
@@ -101,6 +105,8 @@ function spawnFighters(room: Room): FighterState[] {
       hp: 100,
       grounded: true,
       coyoteUntil: 0,
+      jumpHeld: false,
+      jumpBufferUntil: 0,
       frozenUntil: 0,
       giantUntil: 0,
       invertUntil: 0,
@@ -136,6 +142,8 @@ function respawnFighter(f: FighterState, arenaId: ArenaId, fullHp = false) {
   f.moveAxis = 0
   f.grounded = true
   f.coyoteUntil = Date.now() + COYOTE_MS
+  f.jumpHeld = false
+  f.jumpBufferUntil = 0
   f.frozenUntil = 0
   f.blindUntil = 0
   f.invertUntil = 0
@@ -473,7 +481,13 @@ export function submitDoodle(code: string, playerId: string, imageDataUrl: strin
 export function playerInput(
   code: string,
   playerId: string,
-  input: { move?: -1 | 0 | 1; jump?: boolean; punch?: boolean; ability?: boolean },
+  input: {
+    move?: -1 | 0 | 1
+    jump?: boolean
+    jumpRelease?: boolean
+    punch?: boolean
+    ability?: boolean
+  },
 ): { error: string } | { room: Room; broadcast: boolean } {
   const room = getRoom(code)
   if (!room) return { error: 'Rummet finns inte' }
@@ -486,24 +500,39 @@ export function playerInput(
   if (fighter.frozenUntil > now) return { room, broadcast: false }
 
   let important = Boolean(input.jump || input.punch || input.ability)
+  let moveChanged = false
 
-  // Store raw stick intent; invert is applied each tick
+  // Store raw stick intent; invert is applied each tick. Don't snap vx — accel/friction does.
   if (input.move !== undefined) {
-    const move = input.move
-    fighter.moveAxis = move
-    if (move === 0) {
-      fighter.vx = 0
-    } else {
-      const facing = fighter.invertUntil > now ? ((-move) as -1 | 1) : move
+    moveChanged = fighter.moveAxis !== input.move
+    fighter.moveAxis = input.move
+    if (input.move !== 0) {
+      const facing =
+        fighter.invertUntil > now ? ((-input.move) as -1 | 1) : input.move
       fighter.facing = facing > 0 ? 1 : -1
     }
   }
 
-  const canJump = fighter.grounded || fighter.coyoteUntil > now
-  if (input.jump && canJump) {
-    fighter.vy = JUMP_V
-    fighter.grounded = false
-    fighter.coyoteUntil = 0
+  if (input.jump) {
+    fighter.jumpHeld = true
+    fighter.jumpBufferUntil = now + JUMP_BUFFER_MS
+    const canJump = fighter.grounded || fighter.coyoteUntil > now
+    if (canJump) {
+      fighter.vy = JUMP_V
+      fighter.grounded = false
+      fighter.coyoteUntil = 0
+      fighter.jumpBufferUntil = 0
+      important = true
+    }
+  }
+
+  if (input.jumpRelease) {
+    fighter.jumpHeld = false
+    // Cut jump short while still rising (Mario variable height)
+    if (fighter.vy < -2) {
+      fighter.vy *= 0.42
+      important = true
+    }
   }
 
   if (input.punch && fighter.punchCooldownUntil <= now) {
@@ -560,9 +589,9 @@ export function playerInput(
     }
   }
 
-  // Don't persist Redis on every stick nudge
   if (important) touch(room)
-  return { room, broadcast: important }
+  // Broadcast move changes immediately so TV reacts without waiting for next tick
+  return { room, broadcast: important || moveChanged }
 }
 
 function applyAbility(room: Room, fromId: string, ability: AbilityId): string | null {
@@ -628,26 +657,44 @@ export function tickFight(room: Room) {
   const quake = fight.chaos?.kind === 'quake'
 
   for (const f of fight.fighters) {
+    if (f.jumpHeld === undefined) f.jumpHeld = false
+    if (f.jumpBufferUntil === undefined) f.jumpBufferUntil = 0
+
     if (f.frozenUntil > now) {
       f.vx = 0
       f.vy = 0
       f.moveAxis = 0
+      f.jumpHeld = false
       continue
     }
 
     let axis = f.moveAxis
     if (f.invertUntil > now) axis = (-axis) as -1 | 0 | 1
-    const speed = f.grounded ? MOVE_GROUND : MOVE_AIR
-    if (axis === 0) {
-      f.vx = f.grounded ? 0 : f.vx * FRICTION_AIR
-    } else {
-      f.vx = axis * (f.giantUntil > now ? speed * 0.85 : speed)
+    const maxSp = f.giantUntil > now ? MAX_RUN * 0.82 : MAX_RUN
+
+    if (axis !== 0) {
+      const target = axis * maxSp
+      const turning = f.vx !== 0 && Math.sign(f.vx) !== axis
+      const accel =
+        (f.grounded ? ACCEL_GROUND : ACCEL_AIR) * (turning && f.grounded ? 1.55 : 1)
+      if (f.vx < target) f.vx = Math.min(target, f.vx + accel)
+      else if (f.vx > target) f.vx = Math.max(target, f.vx - accel)
       f.facing = axis > 0 ? 1 : -1
+    } else if (f.grounded) {
+      f.vx *= FRICTION_GROUND
+      if (Math.abs(f.vx) < 0.4) f.vx = 0
+    } else {
+      f.vx *= FRICTION_AIR
     }
+
     f.vx += wind
     if (quake) f.vx += (Math.random() - 0.5) * 5
 
-    f.vy = Math.min(MAX_FALL, f.vy + GRAVITY * gravMul)
+    // Asymmetric gravity; release jump early → fall gravity while rising
+    let g = f.vy < 0 ? GRAVITY_UP : GRAVITY_DOWN
+    if (f.vy < 0 && !f.jumpHeld) g = GRAVITY_DOWN * 1.15
+    f.vy = Math.min(MAX_FALL, f.vy + g * gravMul)
+
     f.x = clampX(f.x + f.vx)
     const nextY = f.y + f.vy
     const resolved = resolveVertical(f.x, nextY, f.vy, layout)
@@ -656,9 +703,17 @@ export function tickFight(room: Room) {
     if (resolved.grounded) {
       f.grounded = true
       f.coyoteUntil = now + COYOTE_MS
-      if (axis === 0 && !wind && !quake) f.vx = 0
     } else {
       f.grounded = false
+    }
+
+    // Jump buffer (press slightly before landing)
+    const canJump = f.grounded || f.coyoteUntil > now
+    if (f.jumpBufferUntil > now && canJump) {
+      f.vy = JUMP_V
+      f.grounded = false
+      f.coyoteUntil = 0
+      f.jumpBufferUntil = 0
     }
 
     if (inPit(f.x, f.y, layout) || f.y > 430) {

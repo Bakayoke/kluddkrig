@@ -38,6 +38,10 @@ export type FighterState = {
   hp: number
   grounded: boolean
   coyoteUntil: number
+  /** Variable jump: still holding jump button */
+  jumpHeld: boolean
+  /** Queued jump press for buffer */
+  jumpBufferUntil: number
   frozenUntil: number
   giantUntil: number
   invertUntil: number

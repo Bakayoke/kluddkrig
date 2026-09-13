@@ -62,6 +62,8 @@ const sv = {
   koMsg: '{actor} knockade {target}!',
   chaosMsg: 'Kaos: {event}!',
   padLandscape: 'Vrid telefonen liggande',
+  padUnlock: 'Tryck för helskärmskontroll',
+  padUnlockHint: 'Låser zoom så du inte råkar zooma in mid-fight',
   yourHp: 'HP',
   chaosLabels: {
     wind: 'Vind!',
@@ -142,6 +144,8 @@ const en: typeof sv = {
   koMsg: '{actor} KO’d {target}!',
   chaosMsg: 'Chaos: {event}!',
   padLandscape: 'Rotate phone to landscape',
+  padUnlock: 'Tap for fullscreen controls',
+  padUnlockHint: 'Locks zoom so you don’t pinch mid-fight',
   yourHp: 'HP',
   chaosLabels: {
     wind: 'Wind!',

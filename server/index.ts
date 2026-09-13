@@ -65,7 +65,7 @@ app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
     name: 'kluddkrig',
-    version: '2026-09-13-chaos',
+    version: '2026-09-13-physics',
     rooms: allRooms().size,
     persist: persistDiagnostics(),
   })
@@ -246,6 +246,7 @@ io.on('connection', (socket) => {
     const input: {
       move?: -1 | 0 | 1
       jump?: boolean
+      jumpRelease?: boolean
       punch?: boolean
       ability?: boolean
     } = {}
@@ -253,12 +254,13 @@ io.on('connection', (socket) => {
       input.move = payload.move
     }
     if (payload?.jump) input.jump = true
+    if (payload?.jumpRelease) input.jumpRelease = true
     if (payload?.punch) input.punch = true
     if (payload?.ability) input.ability = true
     const result = playerInput(binding.code, binding.playerId, input)
     if ('error' in result) return ack?.({ ok: false, error: result.error })
     ack?.({ ok: true })
-    // Stick moves sync via fight tick — only push immediately on actions/hits
+    // Actions + stick changes broadcast immediately for snappier TV feel
     if (result.broadcast) broadcastRoom(result.room.code)
   })
 
@@ -294,13 +296,13 @@ setInterval(() => {
   }
 }, 250)
 
-// Fight tick ~33 Hz
+// Fight tick ~45 Hz
 setInterval(() => {
   for (const room of roomsInFight()) {
     tickFight(room)
     broadcastRoom(room.code)
   }
-}, 30)
+}, 22)
 
 setInterval(() => {
   pruneIdleRooms()

@@ -309,11 +309,10 @@ function FightPad({
   }
 
   useEffect(() => {
-    // Heartbeat while held so a dropped packet does not leave you walking forever
     const id = setInterval(() => {
       const axis = moveRef.current
       if (axis !== 0) emitMove(axis, true)
-    }, 180)
+    }, 140)
     return () => clearInterval(id)
   }, [])
 
@@ -379,6 +378,11 @@ function FightPad({
             e.preventDefault()
             sendInput({ jump: true })
           }}
+          onPointerUp={(e) => {
+            e.preventDefault()
+            sendInput({ jumpRelease: true })
+          }}
+          onPointerCancel={() => sendInput({ jumpRelease: true })}
         >
           ⤒
         </button>
@@ -406,6 +410,19 @@ function FightPad({
       </div>
     </div>
   )
+}
+
+const PAD_VIEWPORT =
+  'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover'
+
+function setViewportContent(content: string) {
+  let meta = document.querySelector('meta[name="viewport"]')
+  if (!meta) {
+    meta = document.createElement('meta')
+    meta.setAttribute('name', 'viewport')
+    document.head.appendChild(meta)
+  }
+  meta.setAttribute('content', content)
 }
 
 function isFullscreenActive() {
@@ -459,6 +476,7 @@ function RoomView({
   const [toast, setToast] = useState<{ text: string; kind: string } | null>(null)
   const [flash, setFlash] = useState<string | null>(null)
   const [shake, setShake] = useState(false)
+  const [padReady, setPadReady] = useState(false)
   const lastEventSeq = useRef(0)
   const countdown = useCountdown(room.phaseEndsAt)
   const joinUrl = `${window.location.origin}?join=${room.code}`
@@ -471,8 +489,39 @@ function RoomView({
   const padMode = room.status === 'fight' && room.youPlaying && !tvMode
   useEffect(() => {
     document.body.classList.toggle('pad-mode', padMode)
+    if (!padMode) setPadReady(false)
     return () => document.body.classList.remove('pad-mode')
   }, [padMode])
+
+  useEffect(() => {
+    if (!padMode || !padReady) return
+    setViewportContent(PAD_VIEWPORT)
+    const preventGesture = (e: Event) => e.preventDefault()
+    const preventPinch = (e: TouchEvent) => {
+      if (e.touches.length > 1) e.preventDefault()
+    }
+    document.addEventListener('gesturestart', preventGesture, { passive: false } as AddEventListenerOptions)
+    document.addEventListener('gesturechange', preventGesture, { passive: false } as AddEventListenerOptions)
+    document.addEventListener('gestureend', preventGesture, { passive: false } as AddEventListenerOptions)
+    document.addEventListener('touchmove', preventPinch, { passive: false })
+    return () => {
+      document.removeEventListener('gesturestart', preventGesture)
+      document.removeEventListener('gesturechange', preventGesture)
+      document.removeEventListener('gestureend', preventGesture)
+      document.removeEventListener('touchmove', preventPinch)
+    }
+  }, [padMode, padReady])
+
+  async function unlockPad() {
+    setViewportContent(PAD_VIEWPORT)
+    try {
+      await enterFullscreen()
+      setFsActive(isFullscreenActive())
+    } catch {
+      /* some phones block fullscreen outside Safari/Chrome quirks */
+    }
+    setPadReady(true)
+  }
 
   useEffect(() => {
     const onFs = () => {
@@ -777,37 +826,45 @@ function RoomView({
           )}
           {youPlaying && !tvMode && (
             <>
-              <div className="fight-hud">
-                {(() => {
-                  const me = room.fight.fighters.find((f) => f.playerId === playerId)
-                  const hp = me?.hp ?? 0
-                  return (
-                    <div className="hp-bar">
-                      <span>
-                        {ui.yourHp} {hp}
-                        {padMode ? ` · ${countdown}s` : ''}
-                      </span>
-                      <div className="hp-track">
-                        <div className="hp-fill" style={{ width: `${hp}%` }} />
+              {padMode && !padReady && (
+                <button type="button" className="pad-unlock" onClick={() => void unlockPad()}>
+                  <strong>{ui.padUnlock}</strong>
+                  <span>{ui.padUnlockHint}</span>
+                </button>
+              )}
+              <div className={`fight-controls${padMode && !padReady ? ' locked' : ''}`}>
+                <div className="fight-hud">
+                  {(() => {
+                    const me = room.fight.fighters.find((f) => f.playerId === playerId)
+                    const hp = me?.hp ?? 0
+                    return (
+                      <div className="hp-bar">
+                        <span>
+                          {ui.yourHp} {hp}
+                          {padMode ? ` · ${countdown}s` : ''}
+                        </span>
+                        <div className="hp-track">
+                          <div className="hp-fill" style={{ width: `${hp}%` }} />
+                        </div>
                       </div>
-                    </div>
-                  )
-                })()}
-                <div className={`loot-chip${room.yourAbility ? ' ready' : ''}`}>
-                  {room.yourAbility
-                    ? `${ui.ability}: ${ui.abilityLabels[room.yourAbility]}`
-                    : ui.noAbility}
+                    )
+                  })()}
+                  <div className={`loot-chip${room.yourAbility ? ' ready' : ''}`}>
+                    {room.yourAbility
+                      ? `${ui.ability}: ${ui.abilityLabels[room.yourAbility]}`
+                      : ui.noAbility}
+                  </div>
                 </div>
+                {padMode && <p className="pad-rotate-hint">{ui.padLandscape}</p>}
+                {!padMode && <p className="muted">{ui.fightTvHint}</p>}
+                <FightPad
+                  hasAbility={Boolean(room.yourAbility)}
+                  abilityLabel={
+                    room.yourAbility ? ui.abilityLabels[room.yourAbility] : ui.ability
+                  }
+                  noAbilityLabel={ui.noAbility}
+                />
               </div>
-              {padMode && <p className="pad-rotate-hint">{ui.padLandscape}</p>}
-              {!padMode && <p className="muted">{ui.fightTvHint}</p>}
-              <FightPad
-                hasAbility={Boolean(room.yourAbility)}
-                abilityLabel={
-                  room.yourAbility ? ui.abilityLabels[room.yourAbility] : ui.ability
-                }
-                noAbilityLabel={ui.noAbility}
-              />
             </>
           )}
         </section>
