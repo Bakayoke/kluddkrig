@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { canvasToTransparentPng } from './punchWhite'
 
 type Props = {
   disabled?: boolean
@@ -19,8 +20,7 @@ export function DoodleCanvas({ disabled, onSubmit, submitLabel }: Props) {
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-    ctx.fillStyle = '#fff6e8'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
   }, [])
 
   function pos(e: React.PointerEvent<HTMLCanvasElement>) {
@@ -39,8 +39,16 @@ export function DoodleCanvas({ disabled, onSubmit, submitLabel }: Props) {
     const ctx = canvasRef.current?.getContext('2d')
     if (!ctx) return
     const p = pos(e)
-    ctx.strokeStyle = color
-    ctx.lineWidth = 6
+    // White acts as eraser so “white background” never sticks to the avatar
+    if (color === '#ffffff') {
+      ctx.globalCompositeOperation = 'destination-out'
+      ctx.strokeStyle = 'rgba(0,0,0,1)'
+      ctx.lineWidth = 14
+    } else {
+      ctx.globalCompositeOperation = 'source-over'
+      ctx.strokeStyle = color
+      ctx.lineWidth = 6
+    }
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
     ctx.beginPath()
@@ -58,6 +66,8 @@ export function DoodleCanvas({ disabled, onSubmit, submitLabel }: Props) {
 
   function onPointerUp() {
     drawing.current = false
+    const ctx = canvasRef.current?.getContext('2d')
+    if (ctx) ctx.globalCompositeOperation = 'source-over'
   }
 
   function clear() {
@@ -65,15 +75,14 @@ export function DoodleCanvas({ disabled, onSubmit, submitLabel }: Props) {
     const canvas = canvasRef.current
     const ctx = canvas?.getContext('2d')
     if (!canvas || !ctx) return
-    ctx.fillStyle = '#fff6e8'
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
   }
 
   function submit() {
     const canvas = canvasRef.current
     if (!canvas || submitted) return
     setSubmitted(true)
-    onSubmit(canvas.toDataURL('image/png'))
+    onSubmit(canvasToTransparentPng(canvas))
   }
 
   return (
@@ -93,9 +102,10 @@ export function DoodleCanvas({ disabled, onSubmit, submitLabel }: Props) {
           <button
             key={c}
             type="button"
-            className={`swatch${color === c ? ' active' : ''}`}
-            style={{ background: c }}
-            aria-label={c}
+            className={`swatch${color === c ? ' active' : ''}${c === '#ffffff' ? ' eraser' : ''}`}
+            style={{ background: c === '#ffffff' ? undefined : c }}
+            aria-label={c === '#ffffff' ? 'Eraser' : c}
+            title={c === '#ffffff' ? 'Suddgummi' : c}
             disabled={disabled || submitted}
             onClick={() => setColor(c)}
           />

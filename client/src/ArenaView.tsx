@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { ARENAS, ARENA_H, ARENA_W, GROUND_TOP } from './arena'
+import { punchNearWhiteTransparent } from './punchWhite'
 import type { FightSnapshot, PublicPlayer } from './types'
 
 type Props = {
@@ -11,16 +12,19 @@ type Props = {
 
 export function ArenaView({ fight, players, wide, shake }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const avatars = useRef<Map<string, HTMLImageElement>>(new Map())
+  const avatars = useRef<Map<string, HTMLCanvasElement>>(new Map())
+  const avatarSrc = useRef<Map<string, string>>(new Map())
 
   useEffect(() => {
     for (const p of players) {
       if (!p.avatarDataUrl) continue
-      const existing = avatars.current.get(p.id)
-      if (existing?.src === p.avatarDataUrl) continue
+      if (avatarSrc.current.get(p.id) === p.avatarDataUrl && avatars.current.has(p.id)) continue
+      avatarSrc.current.set(p.id, p.avatarDataUrl)
       const img = new Image()
+      img.onload = () => {
+        avatars.current.set(p.id, punchNearWhiteTransparent(img))
+      }
       img.src = p.avatarDataUrl
-      avatars.current.set(p.id, img)
     }
   }, [players])
 
@@ -99,7 +103,7 @@ export function ArenaView({ fight, players, wide, shake }: Props) {
         ctx.shadowColor = '#ff6b9d'
         ctx.shadowBlur = 18
       }
-      if (img?.complete && img.naturalWidth > 0) {
+      if (img) {
         ctx.drawImage(img, f.x - size / 2, f.y - size, size, size)
       } else {
         ctx.fillStyle = '#7c5cff'

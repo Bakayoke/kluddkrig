@@ -469,8 +469,24 @@ body.tv-mode .tv-lobby-stage {
   touch-action: none;
   border-radius: 16px;
   border: 3px solid var(--yellow);
-  background: var(--paper);
   cursor: crosshair;
+  background-color: #2a1a40;
+  background-image:
+    linear-gradient(45deg, #3a2555 25%, transparent 25%),
+    linear-gradient(-45deg, #3a2555 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #3a2555 75%),
+    linear-gradient(-45deg, transparent 75%, #3a2555 75%);
+  background-size: 16px 16px;
+  background-position:
+    0 0,
+    0 8px,
+    8px -8px,
+    -8px 0;
+}
+.swatch.eraser {
+  background:
+    linear-gradient(45deg, #ccc 25%, #fff 25%, #fff 50%, #ccc 50%, #ccc 75%, #fff 75%) !important;
+  background-size: 10px 10px !important;
 }
 .doodle-colors {
   display: flex;
