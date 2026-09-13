@@ -46,7 +46,31 @@ body.tv-mode {
 
 body.tv-mode .app {
   max-width: none;
-  padding: 1.5rem 2rem;
+  width: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+  padding: 1.25rem 2rem 2rem;
+  box-sizing: border-box;
+}
+
+body.tv-mode {
+  overflow: auto;
+}
+
+.tv-fs-cta {
+  grid-column: 1 / -1;
+  font-size: 1.25rem;
+  padding: 1rem 1.25rem;
+}
+
+.tv-start {
+  margin-top: 1rem;
+  display: grid;
+  gap: 0.5rem;
+}
+.tv-start .btn {
+  font-size: 1.35rem;
+  padding: 1rem 1.25rem;
 }
 
 .conn {

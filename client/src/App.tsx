@@ -365,6 +365,38 @@ function FightPad({
   )
 }
 
+function isFullscreenActive() {
+  const doc = document as Document & { webkitFullscreenElement?: Element | null }
+  return Boolean(document.fullscreenElement || doc.webkitFullscreenElement)
+}
+
+async function enterFullscreen() {
+  const el = document.documentElement as HTMLElement & {
+    webkitRequestFullscreen?: () => Promise<void> | void
+  }
+  try {
+    if (el.requestFullscreen) await el.requestFullscreen()
+    else el.webkitRequestFullscreen?.()
+  } catch {
+    /* CSS tv-mode still applies */
+  }
+}
+
+async function exitFullscreen() {
+  const doc = document as Document & {
+    webkitExitFullscreen?: () => Promise<void> | void
+    webkitFullscreenElement?: Element | null
+  }
+  try {
+    if (document.fullscreenElement || doc.webkitFullscreenElement) {
+      if (document.exitFullscreen) await document.exitFullscreen()
+      else doc.webkitExitFullscreen?.()
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 function RoomView({
   room,
   playerId,
@@ -380,6 +412,7 @@ function RoomView({
 }) {
   const ui = t(lang)
   const [tvMode, setTvMode] = useState(Boolean(initialTv))
+  const [fsActive, setFsActive] = useState(() => isFullscreenActive())
   const [toast, setToast] = useState<string | null>(null)
   const [shake, setShake] = useState(false)
   const lastEventAt = useRef(0)
@@ -393,11 +426,25 @@ function RoomView({
 
   useEffect(() => {
     const onFs = () => {
-      if (!document.fullscreenElement) setTvMode(false)
+      setFsActive(isFullscreenActive())
     }
     document.addEventListener('fullscreenchange', onFs)
-    return () => document.removeEventListener('fullscreenchange', onFs)
+    document.addEventListener('webkitfullscreenchange', onFs as EventListener)
+    return () => {
+      document.removeEventListener('fullscreenchange', onFs)
+      document.removeEventListener('webkitfullscreenchange', onFs as EventListener)
+    }
   }, [])
+
+  // Track "had fullscreen" so Escape exits TV mode properly
+  const hadFs = useRef(false)
+  useEffect(() => {
+    if (fsActive) hadFs.current = true
+    if (!fsActive && hadFs.current && tvMode) {
+      hadFs.current = false
+      setTvMode(false)
+    }
+  }, [fsActive, tvMode])
 
   useEffect(() => {
     const ev = room.lastEvent
@@ -432,27 +479,24 @@ function RoomView({
   async function toggleTvMode() {
     if (tvMode) {
       setTvMode(false)
-      try {
-        if (document.fullscreenElement) await document.exitFullscreen()
-        else (document as Document & { webkitExitFullscreen?: () => void }).webkitExitFullscreen?.()
-      } catch {
-        /* ignore */
-      }
+      hadFs.current = false
+      await exitFullscreen()
+      setFsActive(false)
       return
     }
-    const el = document.documentElement as HTMLElement & {
-      webkitRequestFullscreen?: () => void
-    }
-    try {
-      if (el.requestFullscreen) await el.requestFullscreen()
-      else el.webkitRequestFullscreen?.()
-    } catch {
-      /* CSS tv-mode still applies */
-    }
+    // Must run in the click handler — browsers require a user gesture
+    await enterFullscreen()
+    setFsActive(isFullscreenActive())
     setTvMode(true)
   }
 
+  async function ensureFullscreen() {
+    await enterFullscreen()
+    setFsActive(isFullscreenActive())
+  }
+
   const youPlaying = room.youPlaying
+  const canStart = room.youAreHost && room.playingCount >= room.minPlayers
 
   return (
     <div className={`room${shake ? ' room-shake' : ''}`}>
@@ -483,6 +527,11 @@ function RoomView({
       {room.status === 'lobby' && (
         <>
           <div className="tv-lobby-stage">
+            {tvMode && !fsActive && (
+              <button type="button" className="btn primary tv-fs-cta" onClick={() => void ensureFullscreen()}>
+                {ui.tvFullscreen}
+              </button>
+            )}
             <div className="tv-lobby-qr">
               <JoinQr url={joinUrl} size={300} alt={room.code} />
               <p className="code-huge">{room.code}</p>
@@ -506,6 +555,21 @@ function RoomView({
                   </li>
                 ))}
               </ul>
+              {room.youAreHost && (
+                <div className="tv-start">
+                  {!canStart && (
+                    <p className="muted">{fmt(ui.needPlayers, { n: room.minPlayers })}</p>
+                  )}
+                  <button
+                    type="button"
+                    className="btn primary wide"
+                    disabled={!canStart}
+                    onClick={() => void startGame()}
+                  >
+                    {ui.start}
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -546,12 +610,10 @@ function RoomView({
                   <button
                     type="button"
                     className="btn primary wide"
-                    disabled={room.playingCount < room.minPlayers}
+                    disabled={!canStart}
                     onClick={() => void startGame()}
                   >
-                    {room.playingCount < room.minPlayers
-                      ? fmt(ui.needPlayers, { n: room.minPlayers })
-                      : ui.start}
+                    {!canStart ? fmt(ui.needPlayers, { n: room.minPlayers }) : ui.start}
                   </button>
                 </div>
               )}
