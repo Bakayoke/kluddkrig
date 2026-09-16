@@ -42,6 +42,29 @@ export const RESULTS_MS = 12_000
 
 const ARENA_IDS: ArenaId[] = ['platforms', 'pit', 'bridge']
 const ABILITIES: AbilityId[] = ['teleport', 'freeze', 'invert', 'giant', 'inkblot']
+const COMBO_WINDOW_MS = 2800
+const SUDDEN_DEATH_MS = 15_000
+
+function scoreMult(fight: FightSnapshot) {
+  return fight.suddenDeath ? 2 : 1
+}
+
+function bumpCombo(f: FighterState, now: number) {
+  if (f.comboUntil < now) f.combo = 0
+  f.combo += 1
+  f.comboUntil = now + COMBO_WINDOW_MS
+  return f.combo
+}
+
+function breakCombo(f: FighterState) {
+  f.combo = 0
+  f.comboUntil = 0
+}
+
+/** Points for a landed hit at this combo count (1..5), before sudden-death mult */
+function hitPoints(combo: number) {
+  return 1 + Math.min(Math.max(combo - 1, 0), 4)
+}
 
 const DISCONNECT_GRACE_MS = 60_000
 const ROOM_IDLE_MS = 12 * 60 * 60 * 1000
@@ -113,6 +136,8 @@ function spawnFighters(room: Room): FighterState[] {
       blindUntil: 0,
       punchCooldownUntil: 0,
       hitFlashUntil: 0,
+      combo: 0,
+      comboUntil: 0,
     }
   })
 }
@@ -127,6 +152,7 @@ function emptyFight(room: Room): FightSnapshot {
     crates: [],
     hazards: [],
     chaos: null,
+    suddenDeath: false,
     tick: 0,
     shakeUntil: 0,
   }
@@ -148,6 +174,8 @@ function respawnFighter(f: FighterState, arenaId: ArenaId, fullHp = false) {
   f.blindUntil = 0
   f.invertUntil = 0
   f.giantUntil = 0
+  f.combo = 0
+  f.comboUntil = 0
   f.hp = fullHp ? 100 : Math.max(20, f.hp - 15)
   f.hitFlashUntil = Date.now() + 400
 }
@@ -166,8 +194,9 @@ function hurtFighter(
   const victim = room.players.find((p) => p.id === f.playerId)
   if (opts?.killerId && opts.killerId !== f.playerId) {
     const killer = room.players.find((p) => p.id === opts.killerId)
-    if (killer) killer.score += 2
+    if (killer) killer.score += 2 * scoreMult(room.fight)
   }
+  breakCombo(f)
   respawnFighter(f, room.fight.arenaId, true)
   pushEvent(room, {
     kind: 'ko',
@@ -548,20 +577,31 @@ export function playerInput(
         other.vy = Math.min(other.vy, -5)
         other.grounded = false
         other.coyoteUntil = 0
-        if (actor) actor.score += 1
+        breakCombo(other)
+        const combo = bumpCombo(fighter, now)
+        const pts = hitPoints(combo) * scoreMult(room.fight)
+        if (actor) actor.score += pts
         const ko = hurtFighter(room, other, dmg, {
           killerId: playerId,
           killerName: actor?.name,
         })
         if (!ko) {
           pushEvent(room, {
-            kind: 'hit',
+            kind: combo >= 3 ? 'combo' : 'hit',
             actorId: playerId,
             actorName: actor?.name ?? '?',
             targetId: other.playerId,
             targetName: room.players.find((p) => p.id === other.playerId)?.name ?? '?',
             damage: dmg,
+            combo,
+            points: pts,
           })
+        } else {
+          // Enrich KO toast with combo if any
+          if (room.lastEvent?.kind === 'ko') {
+            room.lastEvent.combo = combo
+            room.lastEvent.points = pts
+          }
         }
         room.fight.shakeUntil = now + 350
         important = true
@@ -640,25 +680,41 @@ function applyAbility(room: Room, fromId: string, ability: AbilityId): string | 
   return null
 }
 
-/** Physics tick ~33 Hz when polled at 30ms */
+/** Physics tick ~45 Hz when polled at 22ms */
 export function tickFight(room: Room) {
   if (room.status !== 'fight' || !room.fight) return
   const fight = room.fight
   if (!fight.hazards) fight.hazards = []
   if (fight.chaos === undefined) fight.chaos = null
+  if (fight.suddenDeath === undefined) fight.suddenDeath = false
   const layout = ARENA_LAYOUTS[fight.arenaId]
   fight.tick += 1
   const now = Date.now()
+
+  // Final 15s sudden death
+  if (!fight.suddenDeath && room.phaseEndsAt > 0 && room.phaseEndsAt - now <= SUDDEN_DEATH_MS) {
+    fight.suddenDeath = true
+    fight.shakeUntil = now + 700
+    pushEvent(room, {
+      kind: 'sudden',
+      actorId: 'arena',
+      actorName: 'Arena',
+    })
+  }
 
   if (fight.chaos && fight.chaos.endsAt <= now) fight.chaos = null
 
   const gravMul = fight.chaos?.kind === 'lowgrav' ? 0.42 : 1
   const wind = fight.chaos?.kind === 'wind' ? fight.chaos.dir * 2.4 : 0
   const quake = fight.chaos?.kind === 'quake'
+  const frenzy = fight.suddenDeath
 
   for (const f of fight.fighters) {
     if (f.jumpHeld === undefined) f.jumpHeld = false
     if (f.jumpBufferUntil === undefined) f.jumpBufferUntil = 0
+    if (f.combo === undefined) f.combo = 0
+    if (f.comboUntil === undefined) f.comboUntil = 0
+    if (f.combo > 0 && f.comboUntil <= now) breakCombo(f)
 
     if (f.frozenUntil > now) {
       f.vx = 0
@@ -717,6 +773,7 @@ export function tickFight(room: Room) {
     }
 
     if (inPit(f.x, f.y, layout) || f.y > 430) {
+      breakCombo(f)
       respawnFighter(f, fight.arenaId, false)
       const name = room.players.find((p) => p.id === f.playerId)?.name ?? '?'
       pushEvent(room, {
@@ -731,8 +788,10 @@ export function tickFight(room: Room) {
     }
   }
 
-  // Random arena chaos (wind / quake / low grav)
-  if (fight.tick % 110 === 35 && !fight.chaos && Math.random() < 0.62) {
+  // Random arena chaos (wind / quake / low grav) — faster in sudden death
+  const chaosEvery = frenzy ? 55 : 110
+  const chaosChance = frenzy ? 0.85 : 0.62
+  if (fight.tick % chaosEvery === (frenzy ? 12 : 35) && !fight.chaos && Math.random() < chaosChance) {
     const kinds: ChaosKind[] = ['wind', 'quake', 'lowgrav']
     const kind = kinds[Math.floor(Math.random() * kinds.length)]!
     fight.chaos = {
@@ -750,7 +809,10 @@ export function tickFight(room: Room) {
   }
 
   // Spawn dodge hazards
-  if (fight.tick % 48 === 0 && fight.hazards.length < 4 && Math.random() < 0.72) {
+  const hazardEvery = frenzy ? 26 : 48
+  const hazardMax = frenzy ? 6 : 4
+  const hazardChance = frenzy ? 0.9 : 0.72
+  if (fight.tick % hazardEvery === 0 && fight.hazards.length < hazardMax && Math.random() < hazardChance) {
     const roll = Math.random()
     let hazard: Hazard
     if (roll < 0.42) {
@@ -761,7 +823,7 @@ export function tickFight(room: Room) {
         y: -30,
         size: 26 + Math.random() * 10,
         vy: 0,
-        warnUntil: now + 850,
+        warnUntil: now + (frenzy ? 550 : 850),
         endsAt: now + 4200,
       }
     } else if (roll < 0.72) {
@@ -773,7 +835,7 @@ export function tickFight(room: Room) {
         y: plat.y,
         size: 20,
         vy: 0,
-        warnUntil: now + 650,
+        warnUntil: now + (frenzy ? 420 : 650),
         endsAt: now + 3200,
       }
     } else {
@@ -784,7 +846,7 @@ export function tickFight(room: Room) {
         y: 0,
         size: 16,
         vy: 0,
-        warnUntil: now + 750,
+        warnUntil: now + (frenzy ? 480 : 750),
         endsAt: now + 2600,
       }
     }
@@ -816,12 +878,12 @@ export function tickFight(room: Room) {
         }
         if (hit) {
           const dmg = h.kind === 'meteor' ? 20 : h.kind === 'spike' ? 14 : 10
+          breakCombo(f)
           hurtFighter(room, f, dmg)
           f.vx += (f.x < h.x ? -1 : 1) * 7
           f.vy = Math.min(f.vy, -4)
           f.grounded = false
           if (h.kind === 'meteor') {
-            // meteor consumed
             h.endsAt = now
           }
         }
@@ -831,7 +893,9 @@ export function tickFight(room: Room) {
   }
   fight.hazards = still
 
-  if (fight.tick % 90 === 0 && fight.crates.length < 3) {
+  const crateEvery = frenzy ? 45 : 90
+  const crateMax = frenzy ? 4 : 3
+  if (fight.tick % crateEvery === 0 && fight.crates.length < crateMax) {
     const spot = layout.crateSpots[Math.floor(Math.random() * layout.crateSpots.length)]!
     const cluttered = fight.crates.some((c) => Math.abs(c.x - spot.x) < 40)
     if (!cluttered) {
@@ -951,6 +1015,12 @@ export function hydrateRooms(list: Room[]) {
             ...room.fight,
             hazards: room.fight.hazards ?? [],
             chaos: room.fight.chaos ?? null,
+            suddenDeath: room.fight.suddenDeath ?? false,
+            fighters: room.fight.fighters.map((f) => ({
+              ...f,
+              combo: f.combo ?? 0,
+              comboUntil: f.comboUntil ?? 0,
+            })),
           }
         : null
     rooms.set(room.code, {

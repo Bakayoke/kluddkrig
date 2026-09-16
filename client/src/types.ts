@@ -38,6 +38,8 @@ export type FighterState = {
   blindUntil: number
   punchCooldownUntil: number
   hitFlashUntil: number
+  combo?: number
+  comboUntil?: number
 }
 
 export type LootCrate = {
@@ -48,7 +50,7 @@ export type LootCrate = {
 }
 
 export type CombatEvent = {
-  kind: 'hit' | 'loot' | 'ability' | 'chaos' | 'ko'
+  kind: 'hit' | 'loot' | 'ability' | 'chaos' | 'ko' | 'sudden' | 'combo'
   at: number
   seq: number
   actorId: string
@@ -58,6 +60,8 @@ export type CombatEvent = {
   ability?: AbilityId
   damage?: number
   chaosKind?: 'wind' | 'quake' | 'lowgrav' | 'meteor' | 'spike' | 'beam'
+  combo?: number
+  points?: number
 }
 
 export type Hazard = {
@@ -85,6 +89,7 @@ export type FightSnapshot = {
   crates: LootCrate[]
   hazards?: Hazard[]
   chaos?: ChaosState | null
+  suddenDeath?: boolean
   tick: number
   shakeUntil: number
 }

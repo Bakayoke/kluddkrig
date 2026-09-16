@@ -190,6 +190,27 @@ export function ArenaView({ fight, players, wide, shake }: Props) {
       ctx.font = '700 13px Nunito, sans-serif'
       ctx.textAlign = 'center'
       ctx.fillText(player?.name ?? '?', f.x, f.y - size - 16)
+      const combo = f.combo ?? 0
+      if (combo >= 2 && (f.comboUntil ?? 0) > now) {
+        ctx.fillStyle = '#ffe566'
+        ctx.strokeStyle = '#1a0f2e'
+        ctx.lineWidth = 3
+        ctx.font = '800 16px Fredoka, sans-serif'
+        const label = `x${combo}`
+        ctx.strokeText(label, f.x + size * 0.35, f.y - size - 28)
+        ctx.fillText(label, f.x + size * 0.35, f.y - size - 28)
+      }
+      ctx.restore()
+    }
+
+    if (fight.suddenDeath) {
+      ctx.save()
+      const pulse = 0.12 + 0.08 * Math.sin(now / 120)
+      ctx.fillStyle = `rgba(255, 60, 80, ${pulse})`
+      ctx.fillRect(0, 0, w, h)
+      ctx.strokeStyle = 'rgba(255, 107, 157, 0.7)'
+      ctx.lineWidth = 6
+      ctx.strokeRect(4, 4, w - 8, h - 8)
       ctx.restore()
     }
 

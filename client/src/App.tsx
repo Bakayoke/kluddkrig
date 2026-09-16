@@ -553,8 +553,11 @@ function RoomView({
     const abilityName = ev.ability ? ui.abilityLabels[ev.ability] : ''
 
     if (ev.kind === 'hit') {
-      const text = fmt(ui.hitMsg, { actor: ev.actorName, target: ev.targetName ?? '?' })
-      setToast({ text, kind: 'hit' })
+      const text =
+        ev.combo && ev.combo >= 2
+          ? fmt(ui.comboMsg, { actor: ev.actorName, n: ev.combo })
+          : fmt(ui.hitMsg, { actor: ev.actorName, target: ev.targetName ?? '?' })
+      setToast({ text, kind: ev.combo && ev.combo >= 2 ? 'combo' : 'hit' })
       setShake(true)
       if (involvesYou) {
         vibrate(ev.targetId === playerId ? [50, 40, 80] : [25, 30, 40])
@@ -563,6 +566,23 @@ function RoomView({
       const t1 = setTimeout(() => setShake(false), 320)
       const t2 = setTimeout(() => setToast(null), 1600)
       const t3 = setTimeout(() => setFlash(null), 280)
+      return () => {
+        clearTimeout(t1)
+        clearTimeout(t2)
+        clearTimeout(t3)
+      }
+    }
+    if (ev.kind === 'combo') {
+      const text = fmt(ui.comboMsg, { actor: ev.actorName, n: ev.combo ?? 3 })
+      setToast({ text, kind: 'combo' })
+      setShake(true)
+      if (involvesYou) {
+        vibrate([30, 25, 30, 25, 50])
+        setFlash(ev.targetId === playerId ? 'hurt' : 'hit')
+      }
+      const t1 = setTimeout(() => setShake(false), 360)
+      const t2 = setTimeout(() => setToast(null), 1700)
+      const t3 = setTimeout(() => setFlash(null), 300)
       return () => {
         clearTimeout(t1)
         clearTimeout(t2)
@@ -601,7 +621,10 @@ function RoomView({
       }
     }
     if (ev.kind === 'ko') {
-      const text = fmt(ui.koMsg, { actor: ev.actorName, target: ev.targetName ?? '?' })
+      const text =
+        ev.combo && ev.combo >= 3
+          ? fmt(ui.comboMsg, { actor: ev.actorName, n: ev.combo })
+          : fmt(ui.koMsg, { actor: ev.actorName, target: ev.targetName ?? '?' })
       setToast({ text, kind: 'ko' })
       setShake(true)
       if (involvesYou) {
@@ -624,6 +647,17 @@ function RoomView({
       if (ev.chaosKind === 'quake' || ev.chaosKind === 'meteor') setShake(true)
       const t1 = setTimeout(() => setShake(false), 500)
       const t2 = setTimeout(() => setToast(null), 2000)
+      return () => {
+        clearTimeout(t1)
+        clearTimeout(t2)
+      }
+    }
+    if (ev.kind === 'sudden') {
+      setToast({ text: ui.suddenMsg, kind: 'sudden' })
+      setShake(true)
+      vibrate([40, 30, 40, 30, 80, 40, 100])
+      const t1 = setTimeout(() => setShake(false), 700)
+      const t2 = setTimeout(() => setToast(null), 2400)
       return () => {
         clearTimeout(t1)
         clearTimeout(t2)
@@ -819,10 +853,14 @@ function RoomView({
           {!padMode && (
             <h2>
               {ui.fightTitle} · {countdown}s · {ui.arena}: {room.arenaId}
+              {room.fight.suddenDeath ? ` · ${ui.suddenMsg}` : ''}
             </h2>
           )}
           {(tvMode || !youPlaying) && (
-            <ArenaView fight={room.fight} players={room.players} wide={tvMode} shake={shake} />
+            <div className={`arena-wrap${room.fight.suddenDeath ? ' sudden' : ''}`}>
+              {room.fight.suddenDeath && <p className="sudden-banner">{ui.suddenMsg}</p>}
+              <ArenaView fight={room.fight} players={room.players} wide={tvMode} shake={shake} />
+            </div>
           )}
           {youPlaying && !tvMode && (
             <>
@@ -837,11 +875,14 @@ function RoomView({
                   {(() => {
                     const me = room.fight.fighters.find((f) => f.playerId === playerId)
                     const hp = me?.hp ?? 0
+                    const combo = me && (me.comboUntil ?? 0) > Date.now() ? me.combo ?? 0 : 0
                     return (
                       <div className="hp-bar">
                         <span>
                           {ui.yourHp} {hp}
+                          {combo >= 2 ? ` · ${ui.yourCombo} x${combo}` : ''}
                           {padMode ? ` · ${countdown}s` : ''}
+                          {room.fight.suddenDeath ? ' · ×2' : ''}
                         </span>
                         <div className="hp-track">
                           <div className="hp-fill" style={{ width: `${hp}%` }} />

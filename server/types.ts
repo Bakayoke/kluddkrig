@@ -49,6 +49,9 @@ export type FighterState = {
   punchCooldownUntil: number
   /** Visual flash after being hit */
   hitFlashUntil: number
+  /** Hit streak; decays after comboUntil */
+  combo: number
+  comboUntil: number
 }
 
 export type LootCrate = {
@@ -84,7 +87,7 @@ export type ChaosState = {
 }
 
 export type CombatEvent = {
-  kind: 'hit' | 'loot' | 'ability' | 'chaos' | 'ko'
+  kind: 'hit' | 'loot' | 'ability' | 'chaos' | 'ko' | 'sudden' | 'combo'
   at: number
   seq: number
   actorId: string
@@ -94,6 +97,8 @@ export type CombatEvent = {
   ability?: AbilityId
   damage?: number
   chaosKind?: ChaosKind | Hazard['kind']
+  combo?: number
+  points?: number
 }
 
 export type FightSnapshot = {
@@ -105,6 +110,8 @@ export type FightSnapshot = {
   crates: LootCrate[]
   hazards: Hazard[]
   chaos: ChaosState | null
+  /** Last 15s — faster hazards + double score */
+  suddenDeath: boolean
   tick: number
   shakeUntil: number
 }
