@@ -31,10 +31,15 @@ const PARTYPATHS_URL = 'https://partypaths.com'
 const SABOTEXT_URL = 'https://sabotext.com'
 const YOURTASKIS_URL = 'https://yourtaskis.com'
 const SCOURGEBORN_URL = 'https://scourgeborn.com'
+const PULSEKAOS_URL = 'https://pulsekaos.com'
 
-function SisterGames({ compact }: { compact?: boolean }) {
+function SisterGames({ compact, hubHint }: { compact?: boolean; hubHint: string }) {
   return (
     <div className={`sister-games${compact ? ' compact' : ''}`}>
+      <a className="sister-game hub" href={PULSEKAOS_URL} target="_blank" rel="noreferrer">
+        <strong>Pulsekaos</strong>
+        <span className="sister-hint">{hubHint}</span>
+      </a>
       <a className="sister-game" href={KLOTTERKAOS_URL} target="_blank" rel="noreferrer">
         <strong>Klotterkaos</strong>
       </a>
@@ -160,7 +165,7 @@ function Home({
       </section>
 
       <p className="sister-label">{ui.sister}</p>
-      <SisterGames />
+      <SisterGames hubHint={ui.sisterHub} />
     </div>
   )
 }
@@ -942,7 +947,7 @@ function RoomView({
       {!tvMode && room.status === 'lobby' && (
         <>
           <p className="sister-label">{ui.sister}</p>
-          <SisterGames compact />
+          <SisterGames compact hubHint={ui.sisterHub} />
         </>
       )}
     </div>

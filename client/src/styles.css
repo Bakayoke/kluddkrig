@@ -440,9 +440,24 @@ body.pad-mode .brand-sm {
   border: 2px solid var(--ink);
   font-size: 0.9rem;
   box-shadow: 2px 2px 0 var(--ink);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+.sister-game.hub {
+  background: var(--yellow);
+  box-shadow: 3px 3px 0 var(--ink);
+}
+.sister-hint {
+  font-size: 0.75rem;
+  font-weight: 700;
+  opacity: 0.75;
 }
 .sister-games.compact .sister-game {
   font-size: 0.8rem;
+}
+.sister-games.compact .sister-hint {
+  font-size: 0.68rem;
 }
 
 .room-bar {
