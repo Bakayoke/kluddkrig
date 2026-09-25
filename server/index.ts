@@ -29,6 +29,7 @@ import {
   startGame,
   submitDoodle,
   tickFight,
+  toFightTick,
   toPublicRoom,
 } from './rooms.js'
 import { buildSnapshot, flushPersist, initPersist, loadSnapshot, persistDiagnostics, scheduleSave } from './persist.js'
@@ -65,7 +66,7 @@ app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
     name: 'kluddkrig',
-    version: '2026-09-16-combo',
+    version: '2026-09-25-fight-tick',
     rooms: allRooms().size,
     persist: persistDiagnostics(),
   })
@@ -127,6 +128,15 @@ function broadcastRoom(roomCode: string) {
       socket.emit('room', toPublicRoom(room, binding.playerId))
     }
   }
+}
+
+/** One shared payload for the whole room — no per-socket avatars */
+function broadcastFightTick(roomCode: string) {
+  const room = getRoom(roomCode)
+  if (!room) return
+  const payload = toFightTick(room)
+  if (!payload) return
+  io.to(roomCode).emit('fightTick', payload)
 }
 
 io.on('connection', (socket) => {
@@ -260,8 +270,7 @@ io.on('connection', (socket) => {
     const result = playerInput(binding.code, binding.playerId, input)
     if ('error' in result) return ack?.({ ok: false, error: result.error })
     ack?.({ ok: true })
-    // Actions + stick changes broadcast immediately for snappier TV feel
-    if (result.broadcast) broadcastRoom(result.room.code)
+    if (result.syncFight) broadcastFightTick(result.room.code)
   })
 
   socket.on('rematch', (_data, ack) => {
@@ -296,13 +305,13 @@ setInterval(() => {
   }
 }, 250)
 
-// Fight tick ~45 Hz
+// Fight tick ~30 Hz — lean fightTick payload (not full room + avatars)
 setInterval(() => {
   for (const room of roomsInFight()) {
     tickFight(room)
-    broadcastRoom(room.code)
+    broadcastFightTick(room.code)
   }
-}, 22)
+}, 33)
 
 setInterval(() => {
   pruneIdleRooms()

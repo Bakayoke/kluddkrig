@@ -517,7 +517,7 @@ export function playerInput(
     punch?: boolean
     ability?: boolean
   },
-): { error: string } | { room: Room; broadcast: boolean } {
+): { error: string } | { room: Room; syncFight: boolean } {
   const room = getRoom(code)
   if (!room) return { error: 'Rummet finns inte' }
   if (room.status !== 'fight' || !room.fight) return { error: 'Inte fight-fas' }
@@ -526,14 +526,12 @@ export function playerInput(
   const actor = room.players.find((p) => p.id === playerId)
 
   const now = Date.now()
-  if (fighter.frozenUntil > now) return { room, broadcast: false }
+  if (fighter.frozenUntil > now) return { room, syncFight: false }
 
   let important = Boolean(input.jump || input.punch || input.ability)
-  let moveChanged = false
 
   // Store raw stick intent; invert is applied each tick. Don't snap vx — accel/friction does.
   if (input.move !== undefined) {
-    moveChanged = fighter.moveAxis !== input.move
     fighter.moveAxis = input.move
     if (input.move !== 0) {
       const facing =
@@ -630,8 +628,8 @@ export function playerInput(
   }
 
   if (important) touch(room)
-  // Broadcast move changes immediately so TV reacts without waiting for next tick
-  return { room, broadcast: important || moveChanged }
+  // Stick nudges ride the fightTick stream — only actions need an immediate push
+  return { room, syncFight: important }
 }
 
 function applyAbility(room: Room, fromId: string, ability: AbilityId): string | null {
@@ -929,7 +927,7 @@ export function tickFight(room: Room) {
     }
   }
 
-  touch(room)
+  // No touch() here — persist mid-fight every tick hammered Redis; phase/input still touch
 }
 
 export function onPhaseTimeout(room: Room) {
@@ -1048,6 +1046,34 @@ export function listPublicLobbies(opts?: { language?: Lang | null; limit?: numbe
       updatedAt: r.updatedAt,
       ageMs: now - r.updatedAt,
     }))
+}
+
+export function toFightTick(room: Room): import('./types.js').FightTickPayload | null {
+  if (room.status !== 'fight' || !room.fight) return null
+  const fight = room.fight
+  const abilities: Record<string, AbilityId | null> = {}
+  for (const p of room.players) {
+    if (p.playing) abilities[p.id] = p.ability
+  }
+  return {
+    code: room.code,
+    phaseEndsAt: room.phaseEndsAt,
+    lastEvent: room.lastEvent,
+    scores: [...room.players]
+      .filter((p) => p.playing)
+      .map((p) => ({ playerId: p.id, name: p.name, score: p.score }))
+      .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)),
+    abilities,
+    fight: {
+      tick: fight.tick,
+      suddenDeath: fight.suddenDeath,
+      shakeUntil: fight.shakeUntil,
+      fighters: fight.fighters,
+      crates: fight.crates,
+      hazards: fight.hazards,
+      chaos: fight.chaos,
+    },
+  }
 }
 
 export function toPublicRoom(room: Room, viewerId: string): PublicRoom {

@@ -116,6 +116,25 @@ export type FightSnapshot = {
   shakeUntil: number
 }
 
+/** Lean per-tick sync — no avatars, no static platforms */
+export type FightTickPayload = {
+  code: string
+  phaseEndsAt: number
+  lastEvent: CombatEvent | null
+  scores: { playerId: string; name: string; score: number }[]
+  /** playerId → held ability (null if none) */
+  abilities: Record<string, AbilityId | null>
+  fight: {
+    tick: number
+    suddenDeath: boolean
+    shakeUntil: number
+    fighters: FighterState[]
+    crates: LootCrate[]
+    hazards: Hazard[]
+    chaos: ChaosState | null
+  }
+}
+
 export type Room = {
   code: string
   hostId: string

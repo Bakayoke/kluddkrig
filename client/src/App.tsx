@@ -10,10 +10,12 @@ import {
   rematch,
   saveSession,
   sendInput,
+  setFightTickHandler,
   setHostPlaying,
   setLanguage,
   setPublicLobby,
   setRoomHandler,
+  applyFightTick,
   startGame,
   submitDoodle,
   subscribeConnection,
@@ -976,6 +978,18 @@ export default function App() {
     })
     return () => setRoomHandler(null)
   }, [])
+
+  useEffect(() => {
+    if (!playerId) {
+      setFightTickHandler(null)
+      return
+    }
+    const viewerId = playerId
+    setFightTickHandler((tick) => {
+      setRoom((prev) => (prev ? applyFightTick(prev, tick, viewerId) : prev))
+    })
+    return () => setFightTickHandler(null)
+  }, [playerId])
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)

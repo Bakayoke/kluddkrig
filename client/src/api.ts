@@ -1,5 +1,5 @@
 import { io, type Socket } from 'socket.io-client'
-import type { Lang, PublicRoom, Session } from './types'
+import type { FightTickPayload, Lang, PublicRoom, Session } from './types'
 
 const API_BASE = (import.meta.env.VITE_SOCKET_URL || '').replace(/\/$/, '')
 
@@ -13,7 +13,9 @@ let rejoinInFlight: Promise<{
 let connectionListenersAttached = false
 
 type RoomHandler = (room: PublicRoom) => void
+type FightTickHandler = (tick: FightTickPayload) => void
 let onRoomHandler: RoomHandler | null = null
+let onFightTickHandler: FightTickHandler | null = null
 
 export function getSocket() {
   if (!socket) {
@@ -35,6 +37,9 @@ export function getSocket() {
     })
     socket.on('room', (room: PublicRoom) => {
       onRoomHandler?.(room)
+    })
+    socket.on('fightTick', (tick: FightTickPayload) => {
+      onFightTickHandler?.(tick)
     })
   }
 
@@ -69,6 +74,44 @@ export function subscribeConnection(handler: (state: ConnState) => void): () => 
 export function setRoomHandler(handler: RoomHandler | null) {
   onRoomHandler = handler
   getSocket()
+}
+
+export function setFightTickHandler(handler: FightTickHandler | null) {
+  onFightTickHandler = handler
+  getSocket()
+}
+
+/** Merge lean fightTick into existing room without dropping avatars/platforms */
+export function applyFightTick(room: PublicRoom, tick: FightTickPayload, viewerId: string): PublicRoom {
+  if (room.code !== tick.code || room.status !== 'fight') return room
+  const prevFight = room.fight
+  return {
+    ...room,
+    phaseEndsAt: tick.phaseEndsAt,
+    lastEvent: tick.lastEvent,
+    scores: tick.scores,
+    yourAbility: tick.abilities[viewerId] ?? null,
+    players: room.players.map((p) => {
+      const score = tick.scores.find((s) => s.playerId === p.id)?.score
+      return {
+        ...p,
+        score: score ?? p.score,
+        hasAbility: Boolean(tick.abilities[p.id]),
+      }
+    }),
+    fight: {
+      arenaId: prevFight?.arenaId ?? room.arenaId,
+      platforms: prevFight?.platforms ?? [],
+      pits: prevFight?.pits ?? [],
+      tick: tick.fight.tick,
+      suddenDeath: tick.fight.suddenDeath,
+      shakeUntil: tick.fight.shakeUntil,
+      fighters: tick.fight.fighters,
+      crates: tick.fight.crates,
+      hazards: tick.fight.hazards,
+      chaos: tick.fight.chaos,
+    },
+  }
 }
 
 function apiUrl(path: string) {
