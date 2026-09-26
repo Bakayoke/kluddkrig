@@ -65,7 +65,7 @@ app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
     name: 'kluddkrig',
-    version: '2026-09-26-sim-sabotage',
+    version: '2026-09-26-party-meta',
     rooms: allRooms().size,
     persist: persistDiagnostics(),
   })

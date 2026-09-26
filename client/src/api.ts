@@ -173,6 +173,10 @@ export async function setPublicLobby(isPublic: boolean) {
   return ack<OkMaybe>('setPublicLobby', { isPublic })
 }
 
+export async function setGameOptions(opts: { maxRounds?: number; promptPack?: string }) {
+  return ack<OkMaybe>('setGameOptions', opts)
+}
+
 export async function startGame() {
   return ack<OkMaybe>('startGame', {})
 }

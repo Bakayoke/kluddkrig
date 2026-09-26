@@ -8,6 +8,7 @@ import {
   loadSession,
   rematch,
   saveSession,
+  setGameOptions,
   setHostPlaying,
   setLanguage,
   setPublicLobby,
@@ -20,10 +21,12 @@ import {
   subscribeConnection,
   type ConnState,
 } from './api'
+import { BeforeAfter } from './BeforeAfter'
 import { DoodleCanvas } from './DoodleCanvas'
-import { fmt, t } from './i18n'
+import { fmt, packLabel, t } from './i18n'
 import { JoinQr } from './qr'
-import type { Lang, PublicRoom, RoomPreview } from './types'
+import type { Lang, PromptPack, PublicRoom, RoomPreview } from './types'
+import { NONE_GUESS } from './types'
 
 const KLOTTERKAOS_URL = 'https://klotterkaos.com'
 const FACTOPIA_URL = 'https://factopia.net'
@@ -312,6 +315,14 @@ function playerName(room: PublicRoom, id: string) {
   return room.players.find((p) => p.id === id)?.name ?? '?'
 }
 
+function difficultyLabel(ui: ReturnType<typeof t>, d: string) {
+  if (d === 'wild') return ui.difficultyWild
+  if (d === 'stealth') return ui.difficultyStealth
+  return ui.difficultyMild
+}
+
+const PACKS: PromptPack[] = ['classic', 'food', 'dark', 'absurd']
+
 function RoomView({
   room,
   playerId,
@@ -326,6 +337,7 @@ function RoomView({
   const ui = t(room.language)
   const [tvMode, setTvMode] = useState(Boolean(startInTv))
   const [fsActive, setFsActive] = useState(() => isFullscreenActive())
+  const [highlightIdx, setHighlightIdx] = useState(0)
   const countdown = useCountdown(room.phaseEndsAt)
   const joinUrl = `${window.location.origin}?join=${room.code}`
   const round = room.round
@@ -354,6 +366,14 @@ function RoomView({
     }
   }, [fsActive, tvMode])
 
+  useEffect(() => {
+    if (room.status !== 'results' || room.highlights.length < 2) return
+    const id = setInterval(() => {
+      setHighlightIdx((i) => (i + 1) % room.highlights.length)
+    }, 3200)
+    return () => clearInterval(id)
+  }, [room.status, room.highlights.length])
+
   async function toggleTvMode() {
     if (tvMode) {
       setTvMode(false)
@@ -369,6 +389,7 @@ function RoomView({
 
   const youPlaying = room.youPlaying
   const canStart = room.youAreHost && room.playingCount >= room.minPlayers
+  const highlight = room.highlights[highlightIdx] ?? room.highlights[0]
 
   return (
     <div className="room">
@@ -477,6 +498,21 @@ function RoomView({
                     />
                     {ui.publicLobby}
                   </label>
+                  <div className="pack-row">
+                    <span className="muted">{ui.promptPack}</span>
+                    <div className="pack-chips">
+                      {PACKS.map((pack) => (
+                        <button
+                          key={pack}
+                          type="button"
+                          className={`chip${room.promptPack === pack ? ' active' : ''}`}
+                          onClick={() => void setGameOptions({ promptPack: pack })}
+                        >
+                          {packLabel(ui, pack)}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <button
                     type="button"
                     className="btn primary wide"
@@ -496,6 +532,7 @@ function RoomView({
         <p className="phase-meta">
           {fmt(ui.round, { n: room.roundIndex, max: room.maxRounds })}
           {room.phaseEndsAt > 0 ? ` · ${countdown}s` : ''}
+          {youPlaying && room.yourStreak >= 2 ? ` · ${fmt(ui.streakHint, { n: room.yourStreak })}` : ''}
         </p>
       )}
 
@@ -546,8 +583,9 @@ function RoomView({
           )}
           {youPlaying && round.youCanEdit && round.yourMission && (
             <>
-              <div className="mission-card hot">
+              <div className={`mission-card hot diff-${round.yourMission.difficulty}`}>
                 <p className="muted">{ui.sabotageHint}</p>
+                <p className="diff-badge">{difficultyLabel(ui, round.yourMission.difficulty)}</p>
                 <p className="mission-label">{round.yourMission.label}</p>
               </div>
               <DoodleCanvas
@@ -562,6 +600,7 @@ function RoomView({
               {round.yourMission && (
                 <>
                   <p className="muted">{ui.sabotageHint}</p>
+                  <p className="diff-badge">{difficultyLabel(ui, round.yourMission.difficulty)}</p>
                   <p className="mission-label">{round.yourMission.label}</p>
                 </>
               )}
@@ -584,18 +623,31 @@ function RoomView({
             </p>
           )}
           <div className="suspect-grid">
-            {round.suspectOptions.map((opt, i) => (
-              <button
-                key={opt.id}
-                type="button"
-                className={`suspect-card${round.yourGuess === opt.id ? ' picked' : ''}`}
-                disabled={!youPlaying || !round.youCanGuess}
-                onClick={() => void submitGuess(opt.id)}
-              >
-                <span className="suspect-num">{i + 1}</span>
-                <img src={opt.imageUrl} alt="" />
-              </button>
-            ))}
+            {round.suspectOptions.map((opt, i) =>
+              opt.isNone ? (
+                <button
+                  key={opt.id}
+                  type="button"
+                  className={`suspect-card none-card${round.yourGuess === NONE_GUESS ? ' picked' : ''}`}
+                  disabled={!youPlaying || !round.youCanGuess}
+                  onClick={() => void submitGuess(NONE_GUESS)}
+                >
+                  <span className="suspect-num">{i + 1}</span>
+                  <span className="none-label">{ui.guessNone}</span>
+                </button>
+              ) : (
+                <button
+                  key={opt.id}
+                  type="button"
+                  className={`suspect-card${round.yourGuess === opt.id ? ' picked' : ''}`}
+                  disabled={!youPlaying || !round.youCanGuess}
+                  onClick={() => void submitGuess(opt.id)}
+                >
+                  <span className="suspect-num">{i + 1}</span>
+                  <img src={opt.imageUrl} alt="" />
+                </button>
+              ),
+            )}
           </div>
           {youPlaying && round.yourGuess && <p className="muted">{ui.youGuessed}</p>}
         </section>
@@ -631,33 +683,55 @@ function RoomView({
 
       {room.status === 'reveal' && round && (
         <section className="phase reveal-phase">
-          <h2>{ui.revealTitle}</h2>
+          <h2 className="reveal-pop">{ui.revealTitle}</h2>
+          {round.roast && <p className="roast-line">{round.roast}</p>}
           <p className="reveal-line">
             {ui.theWord}: <strong>{round.prompt}</strong>
           </p>
-          <p className="reveal-line">
-            {ui.theSaboteur}:{' '}
-            <strong>{round.saboteurId ? playerName(room, round.saboteurId) : '?'}</strong>
-            {round.saboteurMission ? ` · ${round.saboteurMission}` : ''}
-          </p>
-          {round.sabotagedArtistId && (
-            <p className="muted">
-              {ui.sabotagedArt} ·{' '}
-              {fmt(ui.byArtist, { name: playerName(room, round.sabotagedArtistId) })}
+          {round.mode === 'doubleBluff' || round.saboteurIds.length === 0 ? (
+            <p className="reveal-line hot-line">{ui.noSaboteur}</p>
+          ) : (
+            <p className="reveal-line">
+              {round.saboteurIds.length > 1 ? ui.theSaboteurs : ui.theSaboteur}:{' '}
+              <strong>{round.saboteurIds.map((id) => playerName(room, id)).join(', ')}</strong>
+              {round.saboteurMissions.length > 0 ? ` · ${round.saboteurMissions.join(' / ')}` : ''}
             </p>
           )}
-          <div className="reveal-grid">
-            {round.focusOriginalUrl && (
-              <figure>
-                <figcaption>{ui.original}</figcaption>
-                <img className="stage-art" src={round.focusOriginalUrl} alt="" />
-              </figure>
+          {round.focusOriginalUrl && round.focusFinalUrl && (
+            <BeforeAfter
+              beforeUrl={round.focusOriginalUrl}
+              afterUrl={round.focusFinalUrl}
+              beforeLabel={ui.original}
+              afterLabel={ui.sabotaged}
+              hint={ui.dragCompare}
+            />
+          )}
+          <div className="reveal-meta">
+            {round.correctGuessers.length > 0 && (
+              <p>
+                {ui.spotters}:{' '}
+                <strong>{round.correctGuessers.map((id) => playerName(room, id)).join(', ')}</strong>
+              </p>
             )}
-            {round.focusFinalUrl && (
-              <figure>
-                <figcaption>{ui.sabotaged}</figcaption>
-                <img className="stage-art" src={round.focusFinalUrl} alt="" />
-              </figure>
+            {round.votedSaboteurCorrectly.length > 0 && (
+              <p>
+                {ui.voters}:{' '}
+                <strong>
+                  {round.votedSaboteurCorrectly.map((id) => playerName(room, id)).join(', ')}
+                </strong>
+              </p>
+            )}
+            {round.revengeIds.length > 0 && (
+              <p className="revenge-line">
+                {ui.revenge}{' '}
+                <strong>{round.revengeIds.map((id) => playerName(room, id)).join(', ')}</strong>
+              </p>
+            )}
+            {round.stealthBonusIds.length > 0 && (
+              <p>
+                {ui.stealthWin}:{' '}
+                <strong>{round.stealthBonusIds.map((id) => playerName(room, id)).join(', ')}</strong>
+              </p>
             )}
           </div>
           {round.gallery.length > 0 && (
@@ -665,7 +739,7 @@ function RoomView({
               {round.gallery.map((g) => (
                 <figure
                   key={g.artistId}
-                  className={g.artistId === round.sabotagedArtistId ? 'is-sabotaged' : ''}
+                  className={round.sabotagedArtistIds.includes(g.artistId) ? 'is-sabotaged' : ''}
                 >
                   <figcaption>{g.artistName}</figcaption>
                   <img src={g.finalUrl} alt="" />
@@ -683,6 +757,19 @@ function RoomView({
             {ui.resultsTitle}
             {room.phaseEndsAt > 0 ? ` · ${countdown}s` : ''}
           </h2>
+          {highlight && (
+            <div className="highlight-reel">
+              <h3>{ui.highlights}</h3>
+              <div className="highlight-card">
+                <img src={highlight.imageUrl} alt="" />
+                <p className="highlight-cap">
+                  R{highlight.roundIndex} · {highlight.saboteurName}
+                  {highlight.mission ? ` · ${highlight.mission}` : ''}
+                </p>
+                {highlight.roast && <p className="muted">{highlight.roast}</p>}
+              </div>
+            </div>
+          )}
           <h3>{ui.scores}</h3>
           <ol className="scores">
             {room.scores.map((s) => (
@@ -693,9 +780,14 @@ function RoomView({
             ))}
           </ol>
           {room.youAreHost && (
-            <button type="button" className="btn primary" onClick={() => void rematch()}>
-              {ui.rematch}
-            </button>
+            <div className="results-actions">
+              <button type="button" className="btn primary wide" onClick={() => void startGame()}>
+                {ui.playAgain}
+              </button>
+              <button type="button" className="btn ghost wide" onClick={() => void rematch()}>
+                {ui.rematch}
+              </button>
+            </div>
           )}
         </section>
       )}

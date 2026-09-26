@@ -1,4 +1,4 @@
-import type { Lang } from './types'
+import type { Lang, PromptPack } from './types'
 
 const sv = {
   tagline: 'Rita. Sabotera. Gissa vem.',
@@ -23,23 +23,37 @@ const sv = {
   sabotageProgress: '{done} / {need} klara',
   sabotageDone: 'Klar!',
   guessTitle: 'Vilken bild saboterades?',
-  guessHint: 'Alla fick ett uppdrag — men bara ett var äkta',
+  guessHint: 'Alla fick ett uppdrag — men bara ett var äkta… eller?',
+  guessNone: 'Ingen saboterades',
   guessWait: 'Väntar på gissningar…',
   voteTitle: 'Vem var sabotören?',
   voteWait: 'Röstning pågår…',
   revealTitle: 'Avslöjande!',
   theWord: 'Ordet var',
   theSaboteur: 'Sabotören var',
+  theSaboteurs: 'Sabotörerna var',
+  noSaboteur: 'Ingen sabotör — dubbelbluff!',
   sabotagedArt: 'Saboterad teckning',
   missionWas: 'Uppdrag',
+  spotters: 'Såg sabotage',
+  voters: 'Röstade rätt',
+  revenge: 'Hämnd!',
+  stealthWin: 'Stealth-bonus',
   resultsTitle: 'Spelet klart',
+  playAgain: 'Spela igen',
   rematch: 'Tillbaka till lobby',
   nextRound: 'Nästa runda snart…',
+  highlights: 'Kvällens highlights',
   tvMode: 'TV-läge',
   tvExit: 'Lämna TV',
   tvFullscreen: 'Tryck för helskärm',
   language: 'Språk',
   publicLobby: 'Öppen lobby',
+  promptPack: 'Ord-pack',
+  packClassic: 'Klassiskt',
+  packFood: 'Mat',
+  packDark: 'Mörkt',
+  packAbsurd: 'Absurt',
   sister: 'Fler party-spel',
   sisterHub: 'Spela allt',
   round: 'Runda {n} / {max}',
@@ -62,14 +76,19 @@ const sv = {
   spectator: 'TV',
   offline: 'offline',
   scanOnPhone: 'Skanna QR med mobilen',
-  original: 'Original',
-  sabotaged: 'Saboterad',
+  original: 'Före',
+  sabotaged: 'Efter',
   youDrew: 'Du ritade — vänta',
   youEdited: 'Du tweaka — vänta',
   youGuessed: 'Du gissade!',
   youVoted: 'Du röstade!',
   correctGuess: 'Rätt gissning!',
   byArtist: 'av {name}',
+  difficultyMild: 'Mild',
+  difficultyWild: 'Galen',
+  difficultyStealth: 'Stealth',
+  streakHint: 'Stealth-streak: {n}',
+  dragCompare: 'Dra för att jämföra',
 }
 
 const en: typeof sv = {
@@ -95,23 +114,37 @@ const en: typeof sv = {
   sabotageProgress: '{done} / {need} done',
   sabotageDone: 'Done!',
   guessTitle: 'Which drawing was sabotaged?',
-  guessHint: 'Everyone got a mission — but only one was real',
+  guessHint: 'Everyone got a mission — but only one was real… or was it?',
+  guessNone: 'Nobody was sabotaged',
   guessWait: 'Waiting for guesses…',
   voteTitle: 'Who was the saboteur?',
   voteWait: 'Voting in progress…',
   revealTitle: 'Reveal!',
   theWord: 'The word was',
   theSaboteur: 'The saboteur was',
+  theSaboteurs: 'The saboteurs were',
+  noSaboteur: 'No saboteur — double bluff!',
   sabotagedArt: 'Sabotaged drawing',
   missionWas: 'Mission',
+  spotters: 'Spotted it',
+  voters: 'Voted right',
+  revenge: 'Revenge!',
+  stealthWin: 'Stealth bonus',
   resultsTitle: 'Game over',
+  playAgain: 'Play again',
   rematch: 'Back to lobby',
   nextRound: 'Next round soon…',
+  highlights: 'Tonight’s highlights',
   tvMode: 'TV mode',
   tvExit: 'Exit TV',
   tvFullscreen: 'Tap for fullscreen',
   language: 'Language',
   publicLobby: 'Open lobby',
+  promptPack: 'Word pack',
+  packClassic: 'Classic',
+  packFood: 'Food',
+  packDark: 'Dark',
+  packAbsurd: 'Absurd',
   sister: 'More party games',
   sisterHub: 'Play all',
   round: 'Round {n} / {max}',
@@ -134,14 +167,19 @@ const en: typeof sv = {
   spectator: 'TV',
   offline: 'offline',
   scanOnPhone: 'Scan QR with your phone',
-  original: 'Original',
-  sabotaged: 'Sabotaged',
+  original: 'Before',
+  sabotaged: 'After',
   youDrew: 'You drew — wait',
   youEdited: 'You edited — wait',
   youGuessed: 'You guessed!',
   youVoted: 'You voted!',
   correctGuess: 'Correct guess!',
   byArtist: 'by {name}',
+  difficultyMild: 'Mild',
+  difficultyWild: 'Wild',
+  difficultyStealth: 'Stealth',
+  streakHint: 'Stealth streak: {n}',
+  dragCompare: 'Drag to compare',
 }
 
 export type UiCopy = typeof sv
@@ -152,4 +190,17 @@ export function t(lang: Lang): UiCopy {
 
 export function fmt(template: string, vars: Record<string, string | number>) {
   return template.replace(/\{(\w+)\}/g, (_, key: string) => String(vars[key] ?? ''))
+}
+
+export function packLabel(ui: UiCopy, pack: PromptPack) {
+  switch (pack) {
+    case 'food':
+      return ui.packFood
+    case 'dark':
+      return ui.packDark
+    case 'absurd':
+      return ui.packAbsurd
+    default:
+      return ui.packClassic
+  }
 }

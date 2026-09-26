@@ -9,9 +9,14 @@ export type RoomStatus =
   | 'reveal'
   | 'results'
 
+export type MissionDifficulty = 'mild' | 'wild' | 'stealth'
+export type PromptPack = 'classic' | 'food' | 'dark' | 'absurd'
+export type RoundMode = 'normal' | 'doubleBluff' | 'doubleSaboteur'
+
 export type PublicMission = {
   id: string
   label: string
+  difficulty: MissionDifficulty
 }
 
 export type PublicPlayer = {
@@ -25,10 +30,22 @@ export type PublicPlayer = {
 export type SuspectOption = {
   id: string
   imageUrl: string
+  isNone?: boolean
+}
+
+export type Highlight = {
+  roundIndex: number
+  imageUrl: string
+  originalUrl: string
+  saboteurName: string
+  artistName: string
+  mission: string
+  roast: string
 }
 
 export type PublicRound = {
   prompt: string | null
+  mode: RoundMode
   drawingsDone: number
   drawingsNeeded: number
   editsDone: number
@@ -44,14 +61,17 @@ export type PublicRound = {
   suspectOptions: SuspectOption[]
   guessesCount: number
   votesCount: number
-  saboteurId: string | null
-  sabotagedArtistId: string | null
-  saboteurMission: string | null
+  saboteurIds: string[]
+  sabotagedArtistIds: string[]
+  saboteurMissions: string[]
   focusOriginalUrl: string | null
   focusFinalUrl: string | null
   gallery: { artistId: string; artistName: string; originalUrl: string; finalUrl: string }[]
   correctGuessers: string[]
   votedSaboteurCorrectly: string[]
+  revengeIds: string[]
+  roast: string | null
+  stealthBonusIds: string[]
 }
 
 export type PublicRoom = {
@@ -62,6 +82,7 @@ export type PublicRoom = {
   language: Lang
   status: RoomStatus
   isPublic: boolean
+  promptPack: PromptPack
   roundIndex: number
   maxRounds: number
   phaseEndsAt: number
@@ -69,10 +90,12 @@ export type PublicRoom = {
   youAreHost: boolean
   youPlaying: boolean
   scores: { playerId: string; name: string; score: number }[]
+  highlights: Highlight[]
   minPlayers: number
   playingCount: number
   drawSeconds: number
   sabotageSeconds: number
+  yourStreak: number
 }
 
 export type Session = {
@@ -89,3 +112,5 @@ export type RoomPreview = {
   hostName: string
   isPublic: boolean
 }
+
+export const NONE_GUESS = '__none__'

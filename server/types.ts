@@ -10,10 +10,14 @@ export type RoomStatus =
   | 'results'
 
 export type MissionKind = 'sabotage' | 'bluff'
+export type MissionDifficulty = 'mild' | 'wild' | 'stealth'
+export type PromptPack = 'classic' | 'food' | 'dark' | 'absurd'
+export type RoundMode = 'normal' | 'doubleBluff' | 'doubleSaboteur'
 
 export type PlayerMission = {
   id: string
   kind: MissionKind
+  difficulty: MissionDifficulty
   label: string
 }
 
@@ -25,24 +29,28 @@ export type Player = {
   playing: boolean
 }
 
+export type Highlight = {
+  roundIndex: number
+  imageUrl: string
+  originalUrl: string
+  saboteurName: string
+  artistName: string
+  mission: string
+  roast: string
+}
+
 export type RoundState = {
-  /** Shared word for the round */
   prompt: string
-  /** playerId → original drawing */
   drawings: Record<string, string>
-  /** editorId → artistId whose drawing they edit */
   editOf: Record<string, string>
-  /** editorId → mission */
   missions: Record<string, PlayerMission>
-  /** Editor with the real sabotage mission */
-  saboteurId: string
-  /** artistId → final image after edit (defaults to original if skipped) */
+  mode: RoundMode
+  /** Real saboteurs (empty in doubleBluff) */
+  saboteurIds: string[]
   finals: Record<string, string>
-  /** artistId of the drawing that received real sabotage */
-  sabotagedArtistId: string
-  /** guesses: playerId → artistId they think was sabotaged */
+  /** Artists whose drawings got real sabotage (empty in doubleBluff) */
+  sabotagedArtistIds: string[]
   guesses: Record<string, string>
-  /** votes: playerId → saboteur playerId */
   votes: Record<string, string>
   usedPromptHistory: string[]
 }
@@ -55,10 +63,14 @@ export type Room = {
   hostPlays: boolean
   status: RoomStatus
   isPublic: boolean
+  promptPack: PromptPack
   roundIndex: number
   maxRounds: number
   phaseEndsAt: number
   round: RoundState | null
+  /** Consecutive stealth successes per player */
+  saboteurStreak: Record<string, number>
+  highlights: Highlight[]
   updatedAt: number
 }
 
@@ -73,24 +85,24 @@ export type PublicPlayer = {
 export type SuspectOption = {
   id: string
   imageUrl: string
+  /** Special "nobody" option for double-bluff rounds */
+  isNone?: boolean
 }
 
-/** Mission shown to a player — never includes real vs bluff */
 export type PublicMission = {
   id: string
   label: string
+  difficulty: MissionDifficulty
 }
 
 export type PublicRound = {
-  /** Shared prompt — during draw for players; during reveal for all */
   prompt: string | null
+  mode: RoundMode
   drawingsDone: number
   drawingsNeeded: number
   editsDone: number
   editsNeeded: number
-  /** Your private mission during sabotage (looks like sabotage for everyone) */
   yourMission: PublicMission | null
-  /** Base image you should edit */
   yourEditBaseUrl: string | null
   youCanDraw: boolean
   youCanEdit: boolean
@@ -98,19 +110,20 @@ export type PublicRound = {
   youCanVote: boolean
   yourGuess: string | null
   yourVote: string | null
-  /** Anonymized finals to pick the sabotaged one */
   suspectOptions: SuspectOption[]
   guessesCount: number
   votesCount: number
-  /** Reveal */
-  saboteurId: string | null
-  sabotagedArtistId: string | null
-  saboteurMission: string | null
+  saboteurIds: string[]
+  sabotagedArtistIds: string[]
+  saboteurMissions: string[]
   focusOriginalUrl: string | null
   focusFinalUrl: string | null
   gallery: { artistId: string; artistName: string; originalUrl: string; finalUrl: string }[]
   correctGuessers: string[]
   votedSaboteurCorrectly: string[]
+  revengeIds: string[]
+  roast: string | null
+  stealthBonusIds: string[]
 }
 
 export type PublicRoom = {
@@ -121,6 +134,7 @@ export type PublicRoom = {
   language: Lang
   status: RoomStatus
   isPublic: boolean
+  promptPack: PromptPack
   roundIndex: number
   maxRounds: number
   phaseEndsAt: number
@@ -128,8 +142,10 @@ export type PublicRoom = {
   youAreHost: boolean
   youPlaying: boolean
   scores: { playerId: string; name: string; score: number }[]
+  highlights: Highlight[]
   minPlayers: number
   playingCount: number
   drawSeconds: number
   sabotageSeconds: number
+  yourStreak: number
 }
