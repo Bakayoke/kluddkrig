@@ -9,11 +9,8 @@ export type RoomStatus =
   | 'reveal'
   | 'results'
 
-export type MissionKind = 'sabotage' | 'bluff'
-
-export type PlayerMission = {
+export type PublicMission = {
   id: string
-  kind: MissionKind
   label: string
 }
 
@@ -25,24 +22,34 @@ export type PublicPlayer = {
   playing: boolean
 }
 
+export type SuspectOption = {
+  id: string
+  imageUrl: string
+}
+
 export type PublicRound = {
-  drawerId: string
-  saboteurId: string | null
   prompt: string | null
-  originalUrl: string | null
-  sabotagedUrl: string | null
-  guessOptions: string[]
-  guessesCount: number
-  votesCount: number
-  yourMission: PlayerMission | null
-  youAreDrawer: boolean
-  youAreSaboteur: boolean
+  drawingsDone: number
+  drawingsNeeded: number
+  editsDone: number
+  editsNeeded: number
+  yourMission: PublicMission | null
+  yourEditBaseUrl: string | null
   youCanDraw: boolean
-  youCanSabotage: boolean
+  youCanEdit: boolean
   youCanGuess: boolean
   youCanVote: boolean
   yourGuess: string | null
   yourVote: string | null
+  suspectOptions: SuspectOption[]
+  guessesCount: number
+  votesCount: number
+  saboteurId: string | null
+  sabotagedArtistId: string | null
+  saboteurMission: string | null
+  focusOriginalUrl: string | null
+  focusFinalUrl: string | null
+  gallery: { artistId: string; artistName: string; originalUrl: string; finalUrl: string }[]
   correctGuessers: string[]
   votedSaboteurCorrectly: string[]
 }

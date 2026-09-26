@@ -26,15 +26,23 @@ export type Player = {
 }
 
 export type RoundState = {
-  drawerId: string
-  saboteurId: string
+  /** Shared word for the round */
   prompt: string
-  /** Assigned missions (saboteur gets real; others get bluff — client only sees own) */
+  /** playerId → original drawing */
+  drawings: Record<string, string>
+  /** editorId → artistId whose drawing they edit */
+  editOf: Record<string, string>
+  /** editorId → mission */
   missions: Record<string, PlayerMission>
-  originalUrl: string | null
-  sabotagedUrl: string | null
-  guessOptions: string[]
+  /** Editor with the real sabotage mission */
+  saboteurId: string
+  /** artistId → final image after edit (defaults to original if skipped) */
+  finals: Record<string, string>
+  /** artistId of the drawing that received real sabotage */
+  sabotagedArtistId: string
+  /** guesses: playerId → artistId they think was sabotaged */
   guesses: Record<string, string>
+  /** votes: playerId → saboteur playerId */
   votes: Record<string, string>
   usedPromptHistory: string[]
 }
@@ -62,28 +70,45 @@ export type PublicPlayer = {
   playing: boolean
 }
 
+export type SuspectOption = {
+  id: string
+  imageUrl: string
+}
+
+/** Mission shown to a player — never includes real vs bluff */
+export type PublicMission = {
+  id: string
+  label: string
+}
+
 export type PublicRound = {
-  drawerId: string
-  /** Only set during reveal */
-  saboteurId: string | null
-  /** Only for drawer during draw, or everyone during reveal */
+  /** Shared prompt — during draw for players; during reveal for all */
   prompt: string | null
-  originalUrl: string | null
-  sabotagedUrl: string | null
-  guessOptions: string[]
-  guessesCount: number
-  votesCount: number
-  /** Your private mission during sabotage */
-  yourMission: PlayerMission | null
-  youAreDrawer: boolean
-  youAreSaboteur: boolean
+  drawingsDone: number
+  drawingsNeeded: number
+  editsDone: number
+  editsNeeded: number
+  /** Your private mission during sabotage (looks like sabotage for everyone) */
+  yourMission: PublicMission | null
+  /** Base image you should edit */
+  yourEditBaseUrl: string | null
   youCanDraw: boolean
-  youCanSabotage: boolean
+  youCanEdit: boolean
   youCanGuess: boolean
   youCanVote: boolean
   yourGuess: string | null
   yourVote: string | null
-  /** Reveal-only summary */
+  /** Anonymized finals to pick the sabotaged one */
+  suspectOptions: SuspectOption[]
+  guessesCount: number
+  votesCount: number
+  /** Reveal */
+  saboteurId: string | null
+  sabotagedArtistId: string | null
+  saboteurMission: string | null
+  focusOriginalUrl: string | null
+  focusFinalUrl: string | null
+  gallery: { artistId: string; artistName: string; originalUrl: string; finalUrl: string }[]
   correctGuessers: string[]
   votedSaboteurCorrectly: string[]
 }

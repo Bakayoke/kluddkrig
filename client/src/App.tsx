@@ -369,7 +369,6 @@ function RoomView({
 
   const youPlaying = room.youPlaying
   const canStart = room.youAreHost && room.playingCount >= room.minPlayers
-  const drawerName = round ? playerName(room, round.drawerId) : ''
 
   return (
     <div className="room">
@@ -503,10 +502,12 @@ function RoomView({
       {room.status === 'draw' && round && (
         <section className="phase">
           <h2>{ui.drawTitle}</h2>
-          {(tvMode || !youPlaying || !round.youCanDraw) && (
+          {(tvMode || !youPlaying) && (
             <div className="stage-card">
-              <p className="stage-lead">{fmt(ui.drawWait, { name: drawerName })}</p>
-              {round.originalUrl && <img className="stage-art" src={round.originalUrl} alt="" />}
+              <p className="stage-lead">{ui.drawWait}</p>
+              <p className="muted">
+                {fmt(ui.drawProgress, { done: round.drawingsDone, need: round.drawingsNeeded })}
+              </p>
             </div>
           )}
           {youPlaying && round.youCanDraw && (
@@ -521,8 +522,13 @@ function RoomView({
               />
             </>
           )}
-          {youPlaying && round.youAreDrawer && !round.youCanDraw && (
-            <p className="muted">{ui.youDrew}</p>
+          {youPlaying && !round.youCanDraw && (
+            <div className="stage-card">
+              <p className="muted">{ui.youDrew}</p>
+              <p className="muted">
+                {fmt(ui.drawProgress, { done: round.drawingsDone, need: round.drawingsNeeded })}
+              </p>
+            </div>
           )}
         </section>
       )}
@@ -530,31 +536,40 @@ function RoomView({
       {room.status === 'sabotage' && round && (
         <section className="phase">
           <h2>{ui.sabotageTitle}</h2>
-          {(tvMode || !round.youCanSabotage) && (
+          {(tvMode || !youPlaying) && (
             <div className="stage-card">
               <p className="stage-lead">{ui.sabotageWait}</p>
-              {round.originalUrl && <img className="stage-art dim" src={round.originalUrl} alt="" />}
+              <p className="muted">
+                {fmt(ui.sabotageProgress, { done: round.editsDone, need: round.editsNeeded })}
+              </p>
             </div>
           )}
-          {youPlaying && round.yourMission && !round.youCanSabotage && (
-            <div className="mission-card">
-              <p className="muted">{ui.sabotageHint}</p>
-              <p className="mission-label">{round.yourMission.label}</p>
-              <p className="muted">{ui.sabotageWait}</p>
-            </div>
-          )}
-          {youPlaying && round.youCanSabotage && round.yourMission && (
+          {youPlaying && round.youCanEdit && round.yourMission && (
             <>
               <div className="mission-card hot">
                 <p className="muted">{ui.sabotageHint}</p>
                 <p className="mission-label">{round.yourMission.label}</p>
               </div>
               <DoodleCanvas
-                baseImageUrl={round.originalUrl}
+                baseImageUrl={round.yourEditBaseUrl}
                 submitLabel={ui.sabotageDone}
                 onSubmit={(url) => void submitSabotage(url)}
               />
             </>
+          )}
+          {youPlaying && !round.youCanEdit && (
+            <div className="mission-card">
+              {round.yourMission && (
+                <>
+                  <p className="muted">{ui.sabotageHint}</p>
+                  <p className="mission-label">{round.yourMission.label}</p>
+                </>
+              )}
+              <p className="muted">{ui.youEdited}</p>
+              <p className="muted">
+                {fmt(ui.sabotageProgress, { done: round.editsDone, need: round.editsNeeded })}
+              </p>
+            </div>
           )}
         </section>
       )}
@@ -562,44 +577,38 @@ function RoomView({
       {room.status === 'guess' && round && (
         <section className="phase">
           <h2>{ui.guessTitle}</h2>
-          <div className="stage-card">
-            {round.sabotagedUrl && <img className="stage-art" src={round.sabotagedUrl} alt="" />}
-            {(tvMode || !round.youCanGuess) && (
-              <p className="muted">
-                {ui.guessWait} ({round.guessesCount})
-              </p>
-            )}
-          </div>
-          {youPlaying && round.youCanGuess && (
-            <div className="choice-grid">
-              {round.guessOptions.map((opt) => (
-                <button
-                  key={opt}
-                  type="button"
-                  className="btn choice"
-                  onClick={() => void submitGuess(opt)}
-                >
-                  {opt}
-                </button>
-              ))}
-            </div>
+          <p className="muted">{ui.guessHint}</p>
+          {(tvMode || !round.youCanGuess) && (
+            <p className="muted">
+              {ui.guessWait} ({round.guessesCount})
+            </p>
           )}
+          <div className="suspect-grid">
+            {round.suspectOptions.map((opt, i) => (
+              <button
+                key={opt.id}
+                type="button"
+                className={`suspect-card${round.yourGuess === opt.id ? ' picked' : ''}`}
+                disabled={!youPlaying || !round.youCanGuess}
+                onClick={() => void submitGuess(opt.id)}
+              >
+                <span className="suspect-num">{i + 1}</span>
+                <img src={opt.imageUrl} alt="" />
+              </button>
+            ))}
+          </div>
           {youPlaying && round.yourGuess && <p className="muted">{ui.youGuessed}</p>}
-          {youPlaying && round.youAreDrawer && <p className="muted">{ui.youDrew}</p>}
         </section>
       )}
 
       {room.status === 'vote' && round && (
         <section className="phase">
           <h2>{ui.voteTitle}</h2>
-          <div className="stage-card">
-            {round.sabotagedUrl && <img className="stage-art" src={round.sabotagedUrl} alt="" />}
-            {(tvMode || !round.youCanVote) && (
-              <p className="muted">
-                {ui.voteWait} ({round.votesCount})
-              </p>
-            )}
-          </div>
+          {(tvMode || !round.youCanVote) && (
+            <p className="muted">
+              {ui.voteWait} ({round.votesCount})
+            </p>
+          )}
           {youPlaying && round.youCanVote && (
             <div className="choice-grid">
               {room.players
@@ -623,27 +632,47 @@ function RoomView({
       {room.status === 'reveal' && round && (
         <section className="phase reveal-phase">
           <h2>{ui.revealTitle}</h2>
-          <div className="reveal-grid">
-            {round.originalUrl && (
-              <figure>
-                <figcaption>{ui.original}</figcaption>
-                <img className="stage-art" src={round.originalUrl} alt="" />
-              </figure>
-            )}
-            {round.sabotagedUrl && (
-              <figure>
-                <figcaption>{ui.sabotaged}</figcaption>
-                <img className="stage-art" src={round.sabotagedUrl} alt="" />
-              </figure>
-            )}
-          </div>
           <p className="reveal-line">
             {ui.theWord}: <strong>{round.prompt}</strong>
           </p>
           <p className="reveal-line">
             {ui.theSaboteur}:{' '}
             <strong>{round.saboteurId ? playerName(room, round.saboteurId) : '?'}</strong>
+            {round.saboteurMission ? ` · ${round.saboteurMission}` : ''}
           </p>
+          {round.sabotagedArtistId && (
+            <p className="muted">
+              {ui.sabotagedArt} ·{' '}
+              {fmt(ui.byArtist, { name: playerName(room, round.sabotagedArtistId) })}
+            </p>
+          )}
+          <div className="reveal-grid">
+            {round.focusOriginalUrl && (
+              <figure>
+                <figcaption>{ui.original}</figcaption>
+                <img className="stage-art" src={round.focusOriginalUrl} alt="" />
+              </figure>
+            )}
+            {round.focusFinalUrl && (
+              <figure>
+                <figcaption>{ui.sabotaged}</figcaption>
+                <img className="stage-art" src={round.focusFinalUrl} alt="" />
+              </figure>
+            )}
+          </div>
+          {round.gallery.length > 0 && (
+            <div className="gallery-grid">
+              {round.gallery.map((g) => (
+                <figure
+                  key={g.artistId}
+                  className={g.artistId === round.sabotagedArtistId ? 'is-sabotaged' : ''}
+                >
+                  <figcaption>{g.artistName}</figcaption>
+                  <img src={g.finalUrl} alt="" />
+                </figure>
+              ))}
+            </div>
+          )}
           {countdown > 0 && <p className="muted">{ui.nextRound}</p>}
         </section>
       )}

@@ -1,11 +1,5 @@
 import { customAlphabet } from 'nanoid'
-import {
-  guessOptions,
-  missionLabel,
-  pickBluffMission,
-  pickPrompt,
-  pickSabotageMission,
-} from './content.js'
+import { missionLabel, pickBluffMission, pickPrompt, pickSabotageMission } from './content.js'
 import type {
   Lang,
   Player,
@@ -15,6 +9,7 @@ import type {
   Room,
   RoomStatus,
   RoundState,
+  SuspectOption,
 } from './types.js'
 
 const makeCode = customAlphabet('ABCDEFGHJKLMNPQRSTUVWXYZ', 4)
@@ -76,10 +71,6 @@ function sanitizeImage(dataUrl: string) {
   if (!raw.startsWith('data:image/')) return null
   if (raw.length > MAX_IMAGE_CHARS) return null
   return raw
-}
-
-function normalizeGuess(s: string) {
-  return s.trim().toLowerCase().replace(/\s+/g, '')
 }
 
 export function allRooms() {
@@ -236,16 +227,41 @@ export function setGameOptions(code: string, playerId: string, opts: { maxRounds
   return room
 }
 
-function pickDrawer(room: Room) {
-  const playing = playingPlayers(room)
-  if (playing.length === 0) return null
-  return playing[(room.roundIndex - 1) % playing.length]!
+function shuffle<T>(arr: T[]) {
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[arr[i], arr[j]] = [arr[j]!, arr[i]!]
+  }
+  return arr
+}
+
+/** editorId → artistId, no self-assignments */
+function derange(ids: string[]): Record<string, string> {
+  if (ids.length < 2) return {}
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const artists = shuffle([...ids])
+    let ok = true
+    const map: Record<string, string> = {}
+    for (let i = 0; i < ids.length; i++) {
+      if (ids[i] === artists[i]) {
+        ok = false
+        break
+      }
+      map[ids[i]!] = artists[i]!
+    }
+    if (ok) return map
+  }
+  const map: Record<string, string> = {}
+  for (let i = 0; i < ids.length; i++) {
+    map[ids[i]!] = ids[(i + 1) % ids.length]!
+  }
+  return map
 }
 
 function beginDraw(room: Room) {
   room.roundIndex += 1
-  const drawer = pickDrawer(room)
-  if (!drawer) {
+  const playing = playingPlayers(room)
+  if (playing.length < MIN_PLAYERS) {
     room.status = 'lobby'
     room.round = null
     room.phaseEndsAt = 0
@@ -253,37 +269,50 @@ function beginDraw(room: Room) {
   }
   const history = room.round?.usedPromptHistory ?? []
   const prompt = pickPrompt(room.language, history)
-  const round: RoundState = {
-    drawerId: drawer.id,
-    saboteurId: '',
+  room.round = {
     prompt,
+    drawings: {},
+    editOf: {},
     missions: {},
-    originalUrl: null,
-    sabotagedUrl: null,
-    guessOptions: [],
+    saboteurId: '',
+    finals: {},
+    sabotagedArtistId: '',
     guesses: {},
     votes: {},
     usedPromptHistory: [...history, prompt].slice(-40),
   }
-  room.round = round
   room.status = 'draw'
   room.phaseEndsAt = Date.now() + DRAW_MS
   touch(room)
 }
 
-function dealMissions(room: Room) {
+function tryFinishDraw(room: Room) {
   const round = room.round
   if (!round) return
-  const candidates = playingPlayers(room).filter((p) => p.id !== round.drawerId)
-  if (candidates.length === 0) return
-  const saboteur = candidates[Math.floor(Math.random() * candidates.length)]!
-  round.saboteurId = saboteur.id
+  const need = playingPlayers(room)
+  if (need.every((p) => round.drawings[p.id])) beginSabotage(room)
+}
+
+function beginSabotage(room: Room) {
+  const round = room.round
+  if (!round) return
+  const artists = playingPlayers(room).filter((p) => round.drawings[p.id])
+  if (artists.length < 2) {
+    advanceAfterReveal(room)
+    return
+  }
+  const ids = artists.map((p) => p.id)
+  round.editOf = derange(ids)
+  const editors = Object.keys(round.editOf)
+  const saboteurId = editors[Math.floor(Math.random() * editors.length)]!
+  round.saboteurId = saboteurId
+  round.sabotagedArtistId = round.editOf[saboteurId]!
   const sabMission = pickSabotageMission()
   const usedBluff: string[] = []
   const missions: Record<string, PlayerMission> = {}
-  for (const p of candidates) {
-    if (p.id === saboteur.id) {
-      missions[p.id] = {
+  for (const editorId of editors) {
+    if (editorId === saboteurId) {
+      missions[editorId] = {
         id: sabMission.id,
         kind: 'sabotage',
         label: missionLabel(sabMission, room.language),
@@ -291,7 +320,7 @@ function dealMissions(room: Room) {
     } else {
       const bluff = pickBluffMission(usedBluff)
       usedBluff.push(bluff.id)
-      missions[p.id] = {
+      missions[editorId] = {
         id: bluff.id,
         kind: 'bluff',
         label: missionLabel(bluff, room.language),
@@ -299,26 +328,46 @@ function dealMissions(room: Room) {
     }
   }
   round.missions = missions
-}
-
-function beginSabotage(room: Room) {
-  if (!room.round?.originalUrl) {
-    // Nothing drawn — skip to next round
-    advanceAfterReveal(room)
-    return
-  }
-  dealMissions(room)
+  round.finals = {}
   room.status = 'sabotage'
   room.phaseEndsAt = Date.now() + SABOTAGE_MS
   touch(room)
 }
 
-function beginGuess(room: Room) {
+function tryFinishSabotage(room: Room) {
   const round = room.round
   if (!round) return
-  if (!round.sabotagedUrl) round.sabotagedUrl = round.originalUrl
-  round.guessOptions = guessOptions(round.prompt, room.language, 6)
+  const editors = Object.keys(round.editOf)
+  const done = editors.filter((editorId) => {
+    const artistId = round.editOf[editorId]!
+    return Boolean(round.finals[artistId])
+  })
+  if (done.length >= editors.length) beginGuess(room)
+}
+
+function fillMissingFinals(round: RoundState) {
+  for (const [, artistId] of Object.entries(round.editOf)) {
+    if (!round.finals[artistId]) {
+      round.finals[artistId] = round.drawings[artistId] ?? ''
+    }
+  }
+}
+
+type RoundExtra = RoundState & {
+  _correctGuessers?: string[]
+  _correctVoters?: string[]
+  _editSubmitted?: Record<string, boolean>
+  _suspectOrder?: string[]
+}
+
+function beginGuess(room: Room) {
+  const round = room.round as RoundExtra | null
+  if (!round) return
+  fillMissingFinals(round)
   round.guesses = {}
+  const order = Object.keys(round.finals).filter((id) => Boolean(round.finals[id]))
+  shuffle(order)
+  round._suspectOrder = order
   room.status = 'guess'
   room.phaseEndsAt = Date.now() + GUESS_MS
   touch(room)
@@ -333,46 +382,44 @@ function beginVote(room: Room) {
 }
 
 function scoreRound(room: Room) {
-  const round = room.round
+  const round = room.round as RoundExtra | null
   if (!round) return
-  const guessers = playingPlayers(room).filter((p) => p.id !== round.drawerId)
+  const players = playingPlayers(room)
   const correctIds: string[] = []
-  for (const g of guessers) {
-    const guess = round.guesses[g.id]
-    if (guess && normalizeGuess(guess) === normalizeGuess(round.prompt)) {
+  for (const g of players) {
+    if (round.guesses[g.id] === round.sabotagedArtistId) {
       correctIds.push(g.id)
       g.score += 1
     }
   }
-  const half = Math.ceil(guessers.length / 2)
-  const majorityCorrect = correctIds.length >= half && guessers.length > 0
-  const drawer = room.players.find((p) => p.id === round.drawerId)
-  if (drawer && majorityCorrect) drawer.score += 2
+  const halfG = Math.ceil(players.length / 2)
+  const majoritySpotted = correctIds.length >= halfG && players.length > 0
 
-  const voters = playingPlayers(room).filter((p) => p.id !== round.saboteurId)
   const correctVoters: string[] = []
-  let wrongMajority = 0
-  let rightMajority = 0
-  for (const v of voters) {
+  let rightVotes = 0
+  let wrongVotes = 0
+  for (const v of players) {
+    if (v.id === round.saboteurId) continue
     const vote = round.votes[v.id]
     if (!vote) continue
     if (vote === round.saboteurId) {
       correctVoters.push(v.id)
       v.score += 1
-      rightMajority += 1
+      rightVotes += 1
     } else {
-      wrongMajority += 1
+      wrongVotes += 1
     }
   }
   const saboteur = room.players.find((p) => p.id === round.saboteurId)
-  const sabotageWorked = !majorityCorrect || wrongMajority > rightMajority
-  if (saboteur && sabotageWorked) saboteur.score += 3
+  const stealthOk = !majoritySpotted || wrongVotes > rightVotes
+  if (saboteur && stealthOk) saboteur.score += 3
 
-  // stash for reveal UI via toPublicRoom derived fields
-  ;(round as RoundState & { _correctGuessers?: string[]; _correctVoters?: string[] })._correctGuessers =
-    correctIds
-  ;(round as RoundState & { _correctGuessers?: string[]; _correctVoters?: string[] })._correctVoters =
-    correctVoters
+  // Artist whose drawing was sabotaged: +2 if majority did NOT spot it
+  const artist = room.players.find((p) => p.id === round.sabotagedArtistId)
+  if (artist && !majoritySpotted) artist.score += 2
+
+  round._correctGuessers = correctIds
+  round._correctVoters = correctVoters
 }
 
 function beginReveal(room: Room) {
@@ -421,11 +468,14 @@ export function submitDrawing(code: string, playerId: string, imageDataUrl: stri
   const room = getRoom(code)
   if (!room) return { error: 'Rummet finns inte' }
   if (room.status !== 'draw' || !room.round) return { error: 'Inte ritfas' }
-  if (room.round.drawerId !== playerId) return { error: 'Du ritar inte nu' }
+  const player = room.players.find((p) => p.id === playerId)
+  if (!player?.playing) return { error: 'Du spelar inte' }
+  if (room.round.drawings[playerId]) return { error: 'Redan skickat' }
   const img = sanitizeImage(imageDataUrl)
   if (!img) return { error: 'Ogiltig bild' }
-  room.round.originalUrl = img
-  beginSabotage(room)
+  room.round.drawings[playerId] = img
+  touch(room)
+  tryFinishDraw(room)
   return room
 }
 
@@ -433,11 +483,17 @@ export function submitSabotage(code: string, playerId: string, imageDataUrl: str
   const room = getRoom(code)
   if (!room) return { error: 'Rummet finns inte' }
   if (room.status !== 'sabotage' || !room.round) return { error: 'Inte sabotage-fas' }
-  if (room.round.saboteurId !== playerId) return { error: 'Du är inte sabotören' }
+  const artistId = room.round.editOf[playerId]
+  if (!artistId) return { error: 'Ingen bild att editera' }
+  if (room.round.finals[artistId]) return { error: 'Redan skickat' }
   const img = sanitizeImage(imageDataUrl)
   if (!img) return { error: 'Ogiltig bild' }
-  room.round.sabotagedUrl = img
-  beginGuess(room)
+  room.round.finals[artistId] = img
+  const extra = room.round as RoundExtra
+  if (!extra._editSubmitted) extra._editSubmitted = {}
+  extra._editSubmitted[playerId] = true
+  touch(room)
+  tryFinishSabotage(room)
   return room
 }
 
@@ -445,15 +501,15 @@ export function submitGuess(code: string, playerId: string, guess: string) {
   const room = getRoom(code)
   if (!room) return { error: 'Rummet finns inte' }
   if (room.status !== 'guess' || !room.round) return { error: 'Inte gissningsfas' }
-  if (room.round.drawerId === playerId) return { error: 'Ritaren gissar inte' }
   const player = room.players.find((p) => p.id === playerId)
   if (!player?.playing) return { error: 'Du spelar inte' }
-  const cleaned = String(guess ?? '').trim().slice(0, 40)
-  if (!cleaned) return { error: 'Tom gissning' }
-  if (!room.round.guessOptions.includes(cleaned)) return { error: 'Ogiltig gissning' }
-  room.round.guesses[playerId] = cleaned
+  const artistId = String(guess ?? '')
+  if (!room.round.finals[artistId] && !room.round.drawings[artistId]) {
+    return { error: 'Ogiltig gissning' }
+  }
+  room.round.guesses[playerId] = artistId
   touch(room)
-  const need = playingPlayers(room).filter((p) => p.id !== room.round!.drawerId)
+  const need = playingPlayers(room)
   if (need.every((p) => room.round!.guesses[p.id])) beginVote(room)
   return room
 }
@@ -476,8 +532,10 @@ export function submitVote(code: string, playerId: string, targetId: string) {
 
 export function onPhaseTimeout(room: Room) {
   if (room.status === 'draw') {
-    if (!room.round?.originalUrl) {
-      // Skip empty draw
+    const round = room.round
+    if (!round) return
+    const drawn = Object.keys(round.drawings).length
+    if (drawn < 2) {
       advanceAfterReveal(room)
       return
     }
@@ -573,66 +631,82 @@ export function listPublicLobbies(opts?: { language?: Lang | null; limit?: numbe
 }
 
 function toPublicRound(room: Room, viewerId: string): PublicRound | null {
-  const round = room.round
+  const round = room.round as RoundExtra | null
   if (!round) return null
   const reveal = room.status === 'reveal' || room.status === 'results'
-  const youAreDrawer = round.drawerId === viewerId
-  const youAreSaboteur = round.saboteurId === viewerId
-  const showPrompt =
-    reveal || (room.status === 'draw' && youAreDrawer)
-  const yourMission =
-    room.status === 'sabotage' && !youAreDrawer ? round.missions[viewerId] ?? null : null
+  const playing = playingPlayers(room)
+  const drawingsNeeded = playing.length
+  const drawingsDone = Object.keys(round.drawings).length
+  const editors = Object.keys(round.editOf)
+  const editsNeeded = editors.length
+  const editsDone = editors.filter((e) => Boolean(round.finals[round.editOf[e]!])).length
+  const youPlaying = Boolean(room.players.find((p) => p.id === viewerId)?.playing)
+  const artistForYou = round.editOf[viewerId]
+  const youSubmittedEdit = Boolean(artistForYou && round.finals[artistForYou])
 
-  const extra = round as RoundState & {
-    _correctGuessers?: string[]
-    _correctVoters?: string[]
+  let suspectOptions: SuspectOption[] = []
+  if (room.status === 'guess' || reveal) {
+    const order =
+      round._suspectOrder ??
+      Object.keys(round.finals).filter((id) => Boolean(round.finals[id]))
+    suspectOptions = order
+      .map((id) => ({ id, imageUrl: round.finals[id]! }))
+      .filter((o) => Boolean(o.imageUrl))
   }
 
+  const gallery = reveal
+    ? Object.keys(round.drawings).map((artistId) => ({
+        artistId,
+        artistName: room.players.find((p) => p.id === artistId)?.name ?? '?',
+        originalUrl: round.drawings[artistId]!,
+        finalUrl: round.finals[artistId] ?? round.drawings[artistId]!,
+      }))
+    : []
+
   return {
-    drawerId: round.drawerId,
-    saboteurId: reveal ? round.saboteurId : null,
-    prompt: showPrompt ? round.prompt : null,
-    originalUrl: reveal || room.status === 'sabotage' ? round.originalUrl : round.originalUrl,
-    // During draw: no image yet on TV until submitted; during sabotage TV can show original dimmed
-    // During guess/vote: only sabotaged; during reveal: both
-    sabotagedUrl:
-      room.status === 'guess' || room.status === 'vote' || reveal
-        ? round.sabotagedUrl
+    prompt:
+      room.status === 'draw' && youPlaying
+        ? round.prompt
+        : reveal
+          ? round.prompt
+          : null,
+    drawingsDone,
+    drawingsNeeded,
+    editsDone,
+    editsNeeded,
+    yourMission:
+      room.status === 'sabotage' && youPlaying && round.missions[viewerId]
+        ? { id: round.missions[viewerId]!.id, label: round.missions[viewerId]!.label }
         : null,
-    guessOptions: room.status === 'guess' || reveal ? round.guessOptions : [],
-    guessesCount: Object.keys(round.guesses).length,
-    votesCount: Object.keys(round.votes).length,
-    yourMission,
-    youAreDrawer,
-    youAreSaboteur: reveal ? youAreSaboteur : false,
-    youCanDraw: room.status === 'draw' && youAreDrawer && !round.originalUrl,
-    youCanSabotage: room.status === 'sabotage' && youAreSaboteur && !round.sabotagedUrl,
-    youCanGuess:
-      room.status === 'guess' && !youAreDrawer && !round.guesses[viewerId],
-    youCanVote: room.status === 'vote' && !round.votes[viewerId],
+    yourEditBaseUrl:
+      room.status === 'sabotage' && artistForYou && !youSubmittedEdit
+        ? round.drawings[artistForYou] ?? null
+        : null,
+    youCanDraw: room.status === 'draw' && youPlaying && !round.drawings[viewerId],
+    youCanEdit: room.status === 'sabotage' && youPlaying && Boolean(artistForYou) && !youSubmittedEdit,
+    youCanGuess: room.status === 'guess' && youPlaying && !round.guesses[viewerId],
+    youCanVote: room.status === 'vote' && youPlaying && !round.votes[viewerId],
     yourGuess: round.guesses[viewerId] ?? null,
     yourVote: round.votes[viewerId] ?? null,
-    correctGuessers: reveal ? extra._correctGuessers ?? [] : [],
-    votedSaboteurCorrectly: reveal ? extra._correctVoters ?? [] : [],
+    suspectOptions: room.status === 'guess' ? suspectOptions : reveal ? suspectOptions : [],
+    guessesCount: Object.keys(round.guesses).length,
+    votesCount: Object.keys(round.votes).length,
+    saboteurId: reveal ? round.saboteurId : null,
+    sabotagedArtistId: reveal ? round.sabotagedArtistId : null,
+    saboteurMission: reveal ? round.missions[round.saboteurId]?.label ?? null : null,
+    focusOriginalUrl: reveal ? round.drawings[round.sabotagedArtistId] ?? null : null,
+    focusFinalUrl: reveal
+      ? round.finals[round.sabotagedArtistId] ?? round.drawings[round.sabotagedArtistId] ?? null
+      : null,
+    gallery,
+    correctGuessers: reveal ? round._correctGuessers ?? [] : [],
+    votedSaboteurCorrectly: reveal ? round._correctVoters ?? [] : [],
   }
 }
 
 export function toPublicRoom(room: Room, viewerId: string): PublicRoom {
   const you = room.players.find((p) => p.id === viewerId)
   const playing = playingPlayers(room)
-  const pubRound = toPublicRound(room, viewerId)
-
-  // TV-friendly: during draw show nothing until done; expose original for TV wait screen after submit
-  if (pubRound && room.status === 'draw' && room.round?.originalUrl) {
-    pubRound.originalUrl = room.round.originalUrl
-  }
-  if (pubRound && room.status === 'sabotage') {
-    pubRound.originalUrl = room.round?.originalUrl ?? null
-  }
-  if (pubRound && (room.status === 'guess' || room.status === 'vote')) {
-    pubRound.originalUrl = null
-  }
-
   return {
     code: room.code,
     hostId: room.hostId,
@@ -650,7 +724,7 @@ export function toPublicRoom(room: Room, viewerId: string): PublicRoom {
     roundIndex: room.roundIndex,
     maxRounds: room.maxRounds,
     phaseEndsAt: room.phaseEndsAt,
-    round: pubRound,
+    round: toPublicRound(room, viewerId),
     youAreHost: room.hostId === viewerId,
     youPlaying: Boolean(you?.playing),
     scores: [...room.players]

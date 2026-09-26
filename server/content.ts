@@ -94,12 +94,14 @@ export const SABOTAGE_MISSIONS: MissionDef[] = [
 ]
 
 export const BLUFF_MISSIONS: MissionDef[] = [
-  { id: 'clearer', kind: 'bluff', sv: 'Gör motivet tydligare', en: 'Make the subject clearer' },
-  { id: 'sun', kind: 'bluff', sv: 'Lägg till en sol', en: 'Add a sun' },
-  { id: 'color', kind: 'bluff', sv: 'Förbättra färgerna', en: 'Improve the colors' },
-  { id: 'detail', kind: 'bluff', sv: 'Lägg till tre små detaljer', en: 'Add three small details' },
-  { id: 'frame', kind: 'bluff', sv: 'Rita en fin ram runt', en: 'Draw a nice frame around it' },
-  { id: 'smile', kind: 'bluff', sv: 'Se till att någon ler', en: 'Make sure someone is smiling' },
+  { id: 'cloud', kind: 'bluff', sv: 'Lägg till ett litet moln', en: 'Add a tiny cloud' },
+  { id: 'flower', kind: 'bluff', sv: 'Rita in en blomma', en: 'Draw a flower somewhere' },
+  { id: 'spark', kind: 'bluff', sv: 'Lägg till tre stjärnor', en: 'Add three stars' },
+  { id: 'bird', kind: 'bluff', sv: 'Lägg till en fågel i bakgrunden', en: 'Add a bird in the background' },
+  { id: 'dots', kind: 'bluff', sv: 'Strö prickar över allt', en: 'Scatter dots everywhere' },
+  { id: 'wave', kind: 'bluff', sv: 'Lägg till en våg', en: 'Add a wave' },
+  { id: 'moon', kind: 'bluff', sv: 'Rita in en måne', en: 'Draw a moon' },
+  { id: 'arrow', kind: 'bluff', sv: 'Rita en pil som pekar fel', en: 'Draw an arrow pointing the wrong way' },
 ]
 
 export function promptsFor(lang: Lang) {
