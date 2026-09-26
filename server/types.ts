@@ -1,13 +1,21 @@
 export type Lang = 'sv' | 'en'
 
-export type RoomStatus = 'lobby' | 'doodle' | 'fight' | 'results'
+export type RoomStatus =
+  | 'lobby'
+  | 'draw'
+  | 'sabotage'
+  | 'guess'
+  | 'vote'
+  | 'reveal'
+  | 'results'
 
-export type AbilityId =
-  | 'teleport'
-  | 'freeze'
-  | 'invert'
-  | 'giant'
-  | 'inkblot'
+export type MissionKind = 'sabotage' | 'bluff'
+
+export type PlayerMission = {
+  id: string
+  kind: MissionKind
+  label: string
+}
 
 export type Player = {
   id: string
@@ -15,124 +23,20 @@ export type Player = {
   score: number
   connected: boolean
   playing: boolean
-  /** Data URL of doodle avatar (set during doodle phase) */
-  avatarDataUrl: string | null
-  /** Held loot ability, if any */
-  ability: AbilityId | null
-  doodleDone: boolean
 }
 
-export type ArenaId = 'platforms' | 'pit' | 'bridge'
-
-export type Platform = { x: number; y: number; w: number; h: number }
-
-export type FighterState = {
-  playerId: string
-  x: number
-  y: number
-  vx: number
-  vy: number
-  facing: 1 | -1
-  /** Held move intent from phone (-1/0/1). Applied each physics tick. */
-  moveAxis: -1 | 0 | 1
-  hp: number
-  grounded: boolean
-  coyoteUntil: number
-  /** Variable jump: still holding jump button */
-  jumpHeld: boolean
-  /** Queued jump press for buffer */
-  jumpBufferUntil: number
-  frozenUntil: number
-  giantUntil: number
-  invertUntil: number
-  blindUntil: number
-  punchCooldownUntil: number
-  /** Visual flash after being hit */
-  hitFlashUntil: number
-  /** Hit streak; decays after comboUntil */
-  combo: number
-  comboUntil: number
-}
-
-export type LootCrate = {
-  id: string
-  x: number
-  y: number
-  ability: AbilityId
-}
-
-/** Things to dodge in the arena */
-export type Hazard = {
-  id: string
-  kind: 'meteor' | 'spike' | 'beam'
-  x: number
-  y: number
-  /** meteor radius / beam half-width */
-  size: number
-  /** For meteor: vertical speed once active */
-  vy: number
-  /** Warning phase until this time, then active */
-  warnUntil: number
-  /** Remove after */
-  endsAt: number
-}
-
-export type ChaosKind = 'wind' | 'quake' | 'lowgrav'
-
-export type ChaosState = {
-  kind: ChaosKind
-  /** wind direction */
-  dir: -1 | 0 | 1
-  endsAt: number
-}
-
-export type CombatEvent = {
-  kind: 'hit' | 'loot' | 'ability' | 'chaos' | 'ko' | 'sudden' | 'combo'
-  at: number
-  seq: number
-  actorId: string
-  actorName: string
-  targetId?: string
-  targetName?: string
-  ability?: AbilityId
-  damage?: number
-  chaosKind?: ChaosKind | Hazard['kind']
-  combo?: number
-  points?: number
-}
-
-export type FightSnapshot = {
-  arenaId: ArenaId
-  /** Authoritative geometry — client must draw these, not a local copy */
-  platforms: Platform[]
-  pits: { x: number; w: number }[]
-  fighters: FighterState[]
-  crates: LootCrate[]
-  hazards: Hazard[]
-  chaos: ChaosState | null
-  /** Last 15s — faster hazards + double score */
-  suddenDeath: boolean
-  tick: number
-  shakeUntil: number
-}
-
-/** Lean per-tick sync — no avatars, no static platforms */
-export type FightTickPayload = {
-  code: string
-  phaseEndsAt: number
-  lastEvent: CombatEvent | null
-  scores: { playerId: string; name: string; score: number }[]
-  /** playerId → held ability (null if none) */
-  abilities: Record<string, AbilityId | null>
-  fight: {
-    tick: number
-    suddenDeath: boolean
-    shakeUntil: number
-    fighters: FighterState[]
-    crates: LootCrate[]
-    hazards: Hazard[]
-    chaos: ChaosState | null
-  }
+export type RoundState = {
+  drawerId: string
+  saboteurId: string
+  prompt: string
+  /** Assigned missions (saboteur gets real; others get bluff — client only sees own) */
+  missions: Record<string, PlayerMission>
+  originalUrl: string | null
+  sabotagedUrl: string | null
+  guessOptions: string[]
+  guesses: Record<string, string>
+  votes: Record<string, string>
+  usedPromptHistory: string[]
 }
 
 export type Room = {
@@ -145,12 +49,8 @@ export type Room = {
   isPublic: boolean
   roundIndex: number
   maxRounds: number
-  fightSeconds: number
-  doodleSeconds: number
   phaseEndsAt: number
-  arenaId: ArenaId
-  fight: FightSnapshot | null
-  lastEvent: CombatEvent | null
+  round: RoundState | null
   updatedAt: number
 }
 
@@ -160,9 +60,32 @@ export type PublicPlayer = {
   score: number
   connected: boolean
   playing: boolean
-  avatarDataUrl: string | null
-  doodleDone: boolean
-  hasAbility: boolean
+}
+
+export type PublicRound = {
+  drawerId: string
+  /** Only set during reveal */
+  saboteurId: string | null
+  /** Only for drawer during draw, or everyone during reveal */
+  prompt: string | null
+  originalUrl: string | null
+  sabotagedUrl: string | null
+  guessOptions: string[]
+  guessesCount: number
+  votesCount: number
+  /** Your private mission during sabotage */
+  yourMission: PlayerMission | null
+  youAreDrawer: boolean
+  youAreSaboteur: boolean
+  youCanDraw: boolean
+  youCanSabotage: boolean
+  youCanGuess: boolean
+  youCanVote: boolean
+  yourGuess: string | null
+  yourVote: string | null
+  /** Reveal-only summary */
+  correctGuessers: string[]
+  votedSaboteurCorrectly: string[]
 }
 
 export type PublicRoom = {
@@ -175,19 +98,13 @@ export type PublicRoom = {
   isPublic: boolean
   roundIndex: number
   maxRounds: number
-  fightSeconds: number
-  doodleSeconds: number
   phaseEndsAt: number
-  arenaId: ArenaId
-  fight: FightSnapshot | null
-  lastEvent: CombatEvent | null
+  round: PublicRound | null
   youAreHost: boolean
   youPlaying: boolean
-  yourAbility: AbilityId | null
-  yourAvatar: string | null
-  doodleDoneCount: number
-  doodleNeeded: number
   scores: { playerId: string; name: string; score: number }[]
   minPlayers: number
   playingCount: number
+  drawSeconds: number
+  sabotageSeconds: number
 }

@@ -1,5 +1,5 @@
 import { io, type Socket } from 'socket.io-client'
-import type { FightTickPayload, Lang, PublicRoom, Session } from './types'
+import type { Lang, PublicRoom, Session } from './types'
 
 const API_BASE = (import.meta.env.VITE_SOCKET_URL || '').replace(/\/$/, '')
 
@@ -13,9 +13,7 @@ let rejoinInFlight: Promise<{
 let connectionListenersAttached = false
 
 type RoomHandler = (room: PublicRoom) => void
-type FightTickHandler = (tick: FightTickPayload) => void
 let onRoomHandler: RoomHandler | null = null
-let onFightTickHandler: FightTickHandler | null = null
 
 export function getSocket() {
   if (!socket) {
@@ -37,9 +35,6 @@ export function getSocket() {
     })
     socket.on('room', (room: PublicRoom) => {
       onRoomHandler?.(room)
-    })
-    socket.on('fightTick', (tick: FightTickPayload) => {
-      onFightTickHandler?.(tick)
     })
   }
 
@@ -76,44 +71,6 @@ export function setRoomHandler(handler: RoomHandler | null) {
   getSocket()
 }
 
-export function setFightTickHandler(handler: FightTickHandler | null) {
-  onFightTickHandler = handler
-  getSocket()
-}
-
-/** Merge lean fightTick into existing room without dropping avatars/platforms */
-export function applyFightTick(room: PublicRoom, tick: FightTickPayload, viewerId: string): PublicRoom {
-  if (room.code !== tick.code || room.status !== 'fight') return room
-  const prevFight = room.fight
-  return {
-    ...room,
-    phaseEndsAt: tick.phaseEndsAt,
-    lastEvent: tick.lastEvent,
-    scores: tick.scores,
-    yourAbility: tick.abilities[viewerId] ?? null,
-    players: room.players.map((p) => {
-      const score = tick.scores.find((s) => s.playerId === p.id)?.score
-      return {
-        ...p,
-        score: score ?? p.score,
-        hasAbility: Boolean(tick.abilities[p.id]),
-      }
-    }),
-    fight: {
-      arenaId: prevFight?.arenaId ?? room.arenaId,
-      platforms: prevFight?.platforms ?? [],
-      pits: prevFight?.pits ?? [],
-      tick: tick.fight.tick,
-      suddenDeath: tick.fight.suddenDeath,
-      shakeUntil: tick.fight.shakeUntil,
-      fighters: tick.fight.fighters,
-      crates: tick.fight.crates,
-      hazards: tick.fight.hazards,
-      chaos: tick.fight.chaos,
-    },
-  }
-}
-
 function apiUrl(path: string) {
   return `${API_BASE}${path}`
 }
@@ -132,6 +89,21 @@ async function apiJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
 }
 
+type OkMaybe = { ok: boolean; error?: string; playerId?: string; room?: PublicRoom }
+
+function ack<T>(event: string, payload: unknown) {
+  return new Promise<T>((resolve, reject) => {
+    const s = getSocket()
+    if (!s.connected) {
+      s.connect()
+    }
+    s.timeout(12_000).emit(event, payload, (err: Error | null, res: T) => {
+      if (err) reject(err)
+      else resolve(res)
+    })
+  })
+}
+
 export async function ensureSessionBound(
   retries = 4,
 ): Promise<{ ok: boolean; playerId?: string; room?: PublicRoom; error?: string } | null> {
@@ -142,16 +114,24 @@ export async function ensureSessionBound(
   rejoinInFlight = (async () => {
     let last: { ok: boolean; playerId?: string; room?: PublicRoom; error?: string } = {
       ok: false,
-      error: 'rejoin failed',
+      error: 'offline',
     }
     for (let i = 0; i < retries; i++) {
-      last = await rejoinGame(session.code, session.playerId)
-      if (last.ok && last.room) return last
-      const err = last.error ?? ''
-      if (err.includes('finns inte') || err.includes('hittades inte') || err.includes('not found')) {
-        break
+      try {
+        const s = getSocket()
+        if (!s.connected) {
+          await new Promise<void>((resolve) => {
+            if (s.connected) return resolve()
+            s.once('connect', () => resolve())
+            setTimeout(() => resolve(), 3000)
+          })
+        }
+        last = await ack<OkMaybe>('rejoin', { code: session.code, playerId: session.playerId })
+        if (last.ok) return last
+      } catch {
+        last = { ok: false, error: 'reconnect failed' }
       }
-      await new Promise((r) => setTimeout(r, 700 * (i + 1)))
+      await new Promise((r) => setTimeout(r, 600 * (i + 1)))
     }
     return last
   })()
@@ -163,59 +143,22 @@ export async function ensureSessionBound(
   }
 }
 
-async function ack<T>(event: string, payload?: unknown): Promise<T> {
-  const s = getSocket()
-  if (!s.connected) {
-    await new Promise<void>((resolve, reject) => {
-      const t = setTimeout(
-        () => reject(new Error('Could not reach server / Kunde inte ansluta till servern')),
-        12_000,
-      )
-      s.once('connect', () => {
-        clearTimeout(t)
-        resolve()
-      })
-    })
-  }
-
-  if (event !== 'create' && event !== 'join' && event !== 'rejoin') {
-    await ensureSessionBound(2)
-  }
-
-  const session = loadSession()
-  const raw =
-    payload && typeof payload === 'object' ? { ...(payload as Record<string, unknown>) } : {}
-  const isIdentityEvent = event === 'create' || event === 'join' || event === 'rejoin'
-  const body = isIdentityEvent
-    ? raw
-    : {
-        ...raw,
-        playerId: raw.playerId ?? session?.playerId,
-        roomCode: raw.roomCode ?? session?.code,
-      }
-
-  return new Promise((resolve, reject) => {
-    s.timeout(12000).emit(event, body, (err: Error | null, res: T) => {
-      if (err) reject(err)
-      else resolve(res)
-    })
+export async function createGame(
+  name: string,
+  language: Lang,
+  isPublic: boolean,
+  hostPlays: boolean,
+) {
+  return ack<OkMaybe & { playerId: string; room: PublicRoom }>('create', {
+    name,
+    language,
+    isPublic,
+    hostPlays,
   })
 }
 
-type OkRoom = { ok: true; playerId: string; room: PublicRoom }
-type Err = { ok: false; error: string; code?: string }
-type OkMaybe = { ok: boolean; error?: string }
-
-export async function createGame(name: string, language: Lang, isPublic = false, hostPlays = true) {
-  return ack<OkRoom | Err>('create', { name, language, isPublic, hostPlays })
-}
-
 export async function joinGame(code: string, name: string) {
-  return ack<OkRoom | Err>('join', { code, name })
-}
-
-export async function rejoinGame(code: string, playerId: string) {
-  return ack<OkRoom | Err>('rejoin', { code, playerId })
+  return ack<OkMaybe & { playerId: string; room: PublicRoom }>('join', { code, name })
 }
 
 export async function setHostPlaying(playing: boolean) {
@@ -230,33 +173,24 @@ export async function setPublicLobby(isPublic: boolean) {
   return ack<OkMaybe>('setPublicLobby', { isPublic })
 }
 
-export async function setGameOptions(opts: {
-  maxRounds?: number
-  fightSeconds?: number
-  doodleSeconds?: number
-}) {
-  return ack<OkMaybe>('setGameOptions', opts)
-}
-
 export async function startGame() {
   return ack<OkMaybe>('startGame', {})
 }
 
-export async function submitDoodle(imageDataUrl: string) {
-  return ack<OkMaybe>('submitDoodle', { imageDataUrl })
+export async function submitDrawing(imageDataUrl: string) {
+  return ack<OkMaybe>('submitDrawing', { imageDataUrl })
 }
 
-export async function sendInput(input: {
-  move?: -1 | 0 | 1
-  jump?: boolean
-  jumpRelease?: boolean
-  punch?: boolean
-  ability?: boolean
-}) {
-  const s = getSocket()
-  if (!s.connected) return
-  // Fire-and-forget — waiting for ack adds perceived lag on every stick nudge
-  s.emit('input', input)
+export async function submitSabotage(imageDataUrl: string) {
+  return ack<OkMaybe>('submitSabotage', { imageDataUrl })
+}
+
+export async function submitGuess(guess: string) {
+  return ack<OkMaybe>('submitGuess', { guess })
+}
+
+export async function submitVote(targetId: string) {
+  return ack<OkMaybe>('submitVote', { targetId })
 }
 
 export async function rematch() {

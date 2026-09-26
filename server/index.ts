@@ -15,11 +15,9 @@ import {
   joinRoom,
   listPublicLobbies,
   onPhaseTimeout,
-  playerInput,
   pruneIdleRooms,
   reconnectSocket,
   rematch,
-  roomsInFight,
   roomsNeedingTick,
   setGameOptions,
   setHostPlaying,
@@ -27,9 +25,10 @@ import {
   setPersistHook,
   setPublicLobby,
   startGame,
-  submitDoodle,
-  tickFight,
-  toFightTick,
+  submitDrawing,
+  submitGuess,
+  submitSabotage,
+  submitVote,
   toPublicRoom,
 } from './rooms.js'
 import { buildSnapshot, flushPersist, initPersist, loadSnapshot, persistDiagnostics, scheduleSave } from './persist.js'
@@ -60,13 +59,13 @@ app.use(
   }),
 )
 
-app.use(express.json({ limit: '1mb' }))
+app.use(express.json({ limit: '2mb' }))
 
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
     name: 'kluddkrig',
-    version: '2026-09-25-fight-tick',
+    version: '2026-09-26-saboteur',
     rooms: allRooms().size,
     persist: persistDiagnostics(),
   })
@@ -113,7 +112,7 @@ const io = new Server(httpServer, {
   pingInterval: 20_000,
   pingTimeout: 60_000,
   connectTimeout: 30_000,
-  maxHttpBufferSize: 1e6,
+  maxHttpBufferSize: 2e6,
 })
 
 function broadcastRoom(roomCode: string) {
@@ -128,15 +127,6 @@ function broadcastRoom(roomCode: string) {
       socket.emit('room', toPublicRoom(room, binding.playerId))
     }
   }
-}
-
-/** One shared payload for the whole room — no per-socket avatars */
-function broadcastFightTick(roomCode: string) {
-  const room = getRoom(roomCode)
-  if (!room) return
-  const payload = toFightTick(room)
-  if (!payload) return
-  io.to(roomCode).emit('fightTick', payload)
 }
 
 io.on('connection', (socket) => {
@@ -241,36 +231,40 @@ io.on('connection', (socket) => {
     broadcastRoom(result.code)
   })
 
-  socket.on('submitDoodle', ({ imageDataUrl }, ack) => {
+  socket.on('submitDrawing', ({ imageDataUrl }, ack) => {
     const binding = getBinding(socket.id)
     if (!binding) return ack?.({ ok: false, error: 'Inte ansluten' })
-    const result = submitDoodle(binding.code, binding.playerId, String(imageDataUrl ?? ''))
+    const result = submitDrawing(binding.code, binding.playerId, String(imageDataUrl ?? ''))
     if ('error' in result) return ack?.({ ok: false, error: result.error })
     ack?.({ ok: true })
     broadcastRoom(result.code)
   })
 
-  socket.on('input', (payload, ack) => {
+  socket.on('submitSabotage', ({ imageDataUrl }, ack) => {
     const binding = getBinding(socket.id)
     if (!binding) return ack?.({ ok: false, error: 'Inte ansluten' })
-    const input: {
-      move?: -1 | 0 | 1
-      jump?: boolean
-      jumpRelease?: boolean
-      punch?: boolean
-      ability?: boolean
-    } = {}
-    if (payload?.move === -1 || payload?.move === 0 || payload?.move === 1) {
-      input.move = payload.move
-    }
-    if (payload?.jump) input.jump = true
-    if (payload?.jumpRelease) input.jumpRelease = true
-    if (payload?.punch) input.punch = true
-    if (payload?.ability) input.ability = true
-    const result = playerInput(binding.code, binding.playerId, input)
+    const result = submitSabotage(binding.code, binding.playerId, String(imageDataUrl ?? ''))
     if ('error' in result) return ack?.({ ok: false, error: result.error })
     ack?.({ ok: true })
-    if (result.syncFight) broadcastFightTick(result.room.code)
+    broadcastRoom(result.code)
+  })
+
+  socket.on('submitGuess', ({ guess }, ack) => {
+    const binding = getBinding(socket.id)
+    if (!binding) return ack?.({ ok: false, error: 'Inte ansluten' })
+    const result = submitGuess(binding.code, binding.playerId, String(guess ?? ''))
+    if ('error' in result) return ack?.({ ok: false, error: result.error })
+    ack?.({ ok: true })
+    broadcastRoom(result.code)
+  })
+
+  socket.on('submitVote', ({ targetId }, ack) => {
+    const binding = getBinding(socket.id)
+    if (!binding) return ack?.({ ok: false, error: 'Inte ansluten' })
+    const result = submitVote(binding.code, binding.playerId, String(targetId ?? ''))
+    if ('error' in result) return ack?.({ ok: false, error: result.error })
+    ack?.({ ok: true })
+    broadcastRoom(result.code)
   })
 
   socket.on('rematch', (_data, ack) => {
@@ -297,21 +291,12 @@ io.on('connection', (socket) => {
   })
 })
 
-// Phase timeouts
 setInterval(() => {
   for (const room of roomsNeedingTick()) {
     onPhaseTimeout(room)
     broadcastRoom(room.code)
   }
 }, 250)
-
-// Fight tick ~30 Hz — lean fightTick payload (not full room + avatars)
-setInterval(() => {
-  for (const room of roomsInFight()) {
-    tickFight(room)
-    broadcastFightTick(room.code)
-  }
-}, 33)
 
 setInterval(() => {
   pruneIdleRooms()
@@ -325,8 +310,17 @@ async function boot() {
 
   const snapshot = await loadSnapshot()
   if (snapshot) {
-    hydrateRooms(snapshot.rooms)
-    console.log(`Persist restore: ${snapshot.rooms.length} rooms (${persist.backend})`)
+    // Old fighter rooms are incompatible — only hydrate lobby-shaped rooms
+  const safe = snapshot.rooms.filter(
+      (r) =>
+        r &&
+        typeof r.code === 'string' &&
+        Array.isArray(r.players) &&
+        !('fight' in (r as object)) &&
+        !('arenaId' in (r as object)),
+    )
+    hydrateRooms(safe as import('./types.js').Room[])
+    console.log(`Persist restore: ${safe.length} rooms (${persist.backend})`)
   } else if (persist.backend) {
     console.log(`Persist ready (${persist.backend}) — empty state`)
   } else {
@@ -343,12 +337,7 @@ async function boot() {
   })
 
   httpServer.listen(PORT, () => {
-    const pdiag = persistDiagnostics()
     console.log(`Kluddkrig API on :${PORT}`)
-    console.log(`Allowed origins: ${allowedOrigins.join(', ')}`)
-    console.log(
-      `Persist: ${pdiag.configured ? pdiag.backend : 'memory only'}${pdiag.hint ? ` | ${pdiag.hint}` : ''}`,
-    )
   })
 }
 

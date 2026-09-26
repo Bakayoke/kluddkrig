@@ -1,12 +1,21 @@
 export type Lang = 'sv' | 'en'
 
-export type RoomStatus = 'lobby' | 'doodle' | 'fight' | 'results'
+export type RoomStatus =
+  | 'lobby'
+  | 'draw'
+  | 'sabotage'
+  | 'guess'
+  | 'vote'
+  | 'reveal'
+  | 'results'
 
-export type AbilityId = 'teleport' | 'freeze' | 'invert' | 'giant' | 'inkblot'
+export type MissionKind = 'sabotage' | 'bluff'
 
-export type ArenaId = 'platforms' | 'pit' | 'bridge'
-
-export type Platform = { x: number; y: number; w: number; h: number }
+export type PlayerMission = {
+  id: string
+  kind: MissionKind
+  label: string
+}
 
 export type PublicPlayer = {
   id: string
@@ -14,101 +23,28 @@ export type PublicPlayer = {
   score: number
   connected: boolean
   playing: boolean
-  avatarDataUrl: string | null
-  doodleDone: boolean
-  hasAbility: boolean
 }
 
-export type FighterState = {
-  playerId: string
-  x: number
-  y: number
-  vx: number
-  vy: number
-  facing: 1 | -1
-  moveAxis: -1 | 0 | 1
-  hp: number
-  grounded: boolean
-  coyoteUntil: number
-  jumpHeld?: boolean
-  jumpBufferUntil?: number
-  frozenUntil: number
-  giantUntil: number
-  invertUntil: number
-  blindUntil: number
-  punchCooldownUntil: number
-  hitFlashUntil: number
-  combo?: number
-  comboUntil?: number
-}
-
-export type LootCrate = {
-  id: string
-  x: number
-  y: number
-  ability: AbilityId
-}
-
-export type CombatEvent = {
-  kind: 'hit' | 'loot' | 'ability' | 'chaos' | 'ko' | 'sudden' | 'combo'
-  at: number
-  seq: number
-  actorId: string
-  actorName: string
-  targetId?: string
-  targetName?: string
-  ability?: AbilityId
-  damage?: number
-  chaosKind?: 'wind' | 'quake' | 'lowgrav' | 'meteor' | 'spike' | 'beam'
-  combo?: number
-  points?: number
-}
-
-export type Hazard = {
-  id: string
-  kind: 'meteor' | 'spike' | 'beam'
-  x: number
-  y: number
-  size: number
-  vy: number
-  warnUntil: number
-  endsAt: number
-}
-
-export type ChaosState = {
-  kind: 'wind' | 'quake' | 'lowgrav'
-  dir: -1 | 0 | 1
-  endsAt: number
-}
-
-export type FightSnapshot = {
-  arenaId: ArenaId
-  platforms: Platform[]
-  pits: { x: number; w: number }[]
-  fighters: FighterState[]
-  crates: LootCrate[]
-  hazards?: Hazard[]
-  chaos?: ChaosState | null
-  suddenDeath?: boolean
-  tick: number
-  shakeUntil: number
-}
-
-export type FightTickPayload = {
-  code: string
-  phaseEndsAt: number
-  lastEvent: CombatEvent | null
-  scores: { playerId: string; name: string; score: number }[]
-  abilities: Record<string, AbilityId | null>
-  fight: {
-    tick: number
-    suddenDeath: boolean
-    shakeUntil: number
-    fighters: FighterState[]
-    crates: LootCrate[]
-    hazards: Hazard[]
-    chaos: ChaosState | null
-  }
+export type PublicRound = {
+  drawerId: string
+  saboteurId: string | null
+  prompt: string | null
+  originalUrl: string | null
+  sabotagedUrl: string | null
+  guessOptions: string[]
+  guessesCount: number
+  votesCount: number
+  yourMission: PlayerMission | null
+  youAreDrawer: boolean
+  youAreSaboteur: boolean
+  youCanDraw: boolean
+  youCanSabotage: boolean
+  youCanGuess: boolean
+  youCanVote: boolean
+  yourGuess: string | null
+  yourVote: string | null
+  correctGuessers: string[]
+  votedSaboteurCorrectly: string[]
 }
 
 export type PublicRoom = {
@@ -121,21 +57,15 @@ export type PublicRoom = {
   isPublic: boolean
   roundIndex: number
   maxRounds: number
-  fightSeconds: number
-  doodleSeconds: number
   phaseEndsAt: number
-  arenaId: ArenaId
-  fight: FightSnapshot | null
-  lastEvent: CombatEvent | null
+  round: PublicRound | null
   youAreHost: boolean
   youPlaying: boolean
-  yourAbility: AbilityId | null
-  yourAvatar: string | null
-  doodleDoneCount: number
-  doodleNeeded: number
   scores: { playerId: string; name: string; score: number }[]
   minPlayers: number
   playingCount: number
+  drawSeconds: number
+  sabotageSeconds: number
 }
 
 export type Session = {

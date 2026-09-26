@@ -1,73 +1,37 @@
 import { customAlphabet } from 'nanoid'
 import {
-  ARENAS as ARENA_LAYOUTS,
-  ARENA_W,
-  ACCEL_AIR,
-  ACCEL_GROUND,
-  COYOTE_MS,
-  FRICTION_AIR,
-  FRICTION_GROUND,
-  GRAVITY_DOWN,
-  GRAVITY_UP,
-  JUMP_BUFFER_MS,
-  JUMP_V,
-  MAX_FALL,
-  MAX_RUN,
-  clampX,
-  inPit,
-  resolveVertical,
-} from './arena.js'
+  guessOptions,
+  missionLabel,
+  pickBluffMission,
+  pickPrompt,
+  pickSabotageMission,
+} from './content.js'
 import type {
-  AbilityId,
-  ArenaId,
-  ChaosKind,
-  FightSnapshot,
-  FighterState,
-  Hazard,
   Lang,
   Player,
+  PlayerMission,
   PublicRoom,
+  PublicRound,
   Room,
   RoomStatus,
+  RoundState,
 } from './types.js'
 
 const makeCode = customAlphabet('ABCDEFGHJKLMNPQRSTUVWXYZ', 4)
 
-export const MIN_PLAYERS = 2
+export const MIN_PLAYERS = 3
 export const MAX_PLAYERS = 8
-export const DEFAULT_DOODLE_SECONDS = 15
-export const DEFAULT_FIGHT_SECONDS = 75
 export const DEFAULT_MAX_ROUNDS = 3
-export const RESULTS_MS = 12_000
-
-const ARENA_IDS: ArenaId[] = ['platforms', 'pit', 'bridge']
-const ABILITIES: AbilityId[] = ['teleport', 'freeze', 'invert', 'giant', 'inkblot']
-const COMBO_WINDOW_MS = 2800
-const SUDDEN_DEATH_MS = 15_000
-
-function scoreMult(fight: FightSnapshot) {
-  return fight.suddenDeath ? 2 : 1
-}
-
-function bumpCombo(f: FighterState, now: number) {
-  if (f.comboUntil < now) f.combo = 0
-  f.combo += 1
-  f.comboUntil = now + COMBO_WINDOW_MS
-  return f.combo
-}
-
-function breakCombo(f: FighterState) {
-  f.combo = 0
-  f.comboUntil = 0
-}
-
-/** Points for a landed hit at this combo count (1..5), before sudden-death mult */
-function hitPoints(combo: number) {
-  return 1 + Math.min(Math.max(combo - 1, 0), 4)
-}
+export const DRAW_MS = 60_000
+export const SABOTAGE_MS = 45_000
+export const GUESS_MS = 30_000
+export const VOTE_MS = 25_000
+export const REVEAL_MS = 12_000
+export const RESULTS_MS = 15_000
 
 const DISCONNECT_GRACE_MS = 60_000
 const ROOM_IDLE_MS = 12 * 60 * 60 * 1000
+const MAX_IMAGE_CHARS = 900_000
 
 const rooms = new Map<string, Room>()
 const socketToPlayer = new Map<string, { code: string; playerId: string }>()
@@ -107,107 +71,15 @@ function playingPlayers(room: Room) {
   return room.players.filter((p) => p.playing)
 }
 
-function pickArena(exclude?: ArenaId): ArenaId {
-  const pool = exclude ? ARENA_IDS.filter((a) => a !== exclude) : ARENA_IDS
-  return pool[Math.floor(Math.random() * pool.length)] ?? 'platforms'
+function sanitizeImage(dataUrl: string) {
+  const raw = String(dataUrl ?? '')
+  if (!raw.startsWith('data:image/')) return null
+  if (raw.length > MAX_IMAGE_CHARS) return null
+  return raw
 }
 
-function spawnFighters(room: Room): FighterState[] {
-  const layout = ARENA_LAYOUTS[room.arenaId]
-  const players = playingPlayers(room)
-  return players.map((p, i) => {
-    const spawn = layout.spawns[i % layout.spawns.length]!
-    return {
-      playerId: p.id,
-      x: spawn.x,
-      y: spawn.y,
-      vx: 0,
-      vy: 0,
-      facing: (spawn.x < 400 ? 1 : -1) as 1 | -1,
-      moveAxis: 0,
-      hp: 100,
-      grounded: true,
-      coyoteUntil: 0,
-      jumpHeld: false,
-      jumpBufferUntil: 0,
-      frozenUntil: 0,
-      giantUntil: 0,
-      invertUntil: 0,
-      blindUntil: 0,
-      punchCooldownUntil: 0,
-      hitFlashUntil: 0,
-      combo: 0,
-      comboUntil: 0,
-    }
-  })
-}
-
-function emptyFight(room: Room): FightSnapshot {
-  const layout = ARENA_LAYOUTS[room.arenaId]
-  return {
-    arenaId: room.arenaId,
-    platforms: layout.platforms.map((p) => ({ ...p })),
-    pits: layout.pits.map((p) => ({ ...p })),
-    fighters: spawnFighters(room),
-    crates: [],
-    hazards: [],
-    chaos: null,
-    suddenDeath: false,
-    tick: 0,
-    shakeUntil: 0,
-  }
-}
-
-function respawnFighter(f: FighterState, arenaId: ArenaId, fullHp = false) {
-  const layout = ARENA_LAYOUTS[arenaId]
-  const spawn = layout.spawns[Math.floor(Math.random() * layout.spawns.length)]!
-  f.x = spawn.x
-  f.y = spawn.y
-  f.vx = 0
-  f.vy = 0
-  f.moveAxis = 0
-  f.grounded = true
-  f.coyoteUntil = Date.now() + COYOTE_MS
-  f.jumpHeld = false
-  f.jumpBufferUntil = 0
-  f.frozenUntil = 0
-  f.blindUntil = 0
-  f.invertUntil = 0
-  f.giantUntil = 0
-  f.combo = 0
-  f.comboUntil = 0
-  f.hp = fullHp ? 100 : Math.max(20, f.hp - 15)
-  f.hitFlashUntil = Date.now() + 400
-}
-
-/** Apply damage; KO → full heal + random respawn. Returns true if KO. */
-function hurtFighter(
-  room: Room,
-  f: FighterState,
-  amount: number,
-  opts?: { killerId?: string; killerName?: string },
-): boolean {
-  if (!room.fight) return false
-  f.hp = Math.max(0, f.hp - amount)
-  f.hitFlashUntil = Date.now() + 350
-  if (f.hp > 0) return false
-  const victim = room.players.find((p) => p.id === f.playerId)
-  if (opts?.killerId && opts.killerId !== f.playerId) {
-    const killer = room.players.find((p) => p.id === opts.killerId)
-    if (killer) killer.score += 2 * scoreMult(room.fight)
-  }
-  breakCombo(f)
-  respawnFighter(f, room.fight.arenaId, true)
-  pushEvent(room, {
-    kind: 'ko',
-    actorId: opts?.killerId ?? f.playerId,
-    actorName: opts?.killerName ?? victim?.name ?? '?',
-    targetId: f.playerId,
-    targetName: victim?.name ?? '?',
-    damage: amount,
-  })
-  room.fight.shakeUntil = Date.now() + 400
-  return true
+function normalizeGuess(s: string) {
+  return s.trim().toLowerCase().replace(/\s+/g, '')
 }
 
 export function allRooms() {
@@ -237,9 +109,6 @@ export function createRoom(
     score: 0,
     connected: true,
     playing: hostPlays,
-    avatarDataUrl: null,
-    ability: null,
-    doodleDone: false,
   }
 
   const room: Room = {
@@ -252,111 +121,78 @@ export function createRoom(
     isPublic: Boolean(isPublic),
     roundIndex: 0,
     maxRounds: DEFAULT_MAX_ROUNDS,
-    fightSeconds: DEFAULT_FIGHT_SECONDS,
-    doodleSeconds: DEFAULT_DOODLE_SECONDS,
     phaseEndsAt: 0,
-    arenaId: 'platforms',
-    fight: null,
-    lastEvent: null,
+    round: null,
     updatedAt: Date.now(),
   }
-
   rooms.set(code, room)
   socketToPlayer.set(socketId, { code, playerId })
   touch(room)
   return { room, playerId }
 }
 
-export function joinRoom(
-  code: string,
-  name: string,
-  socketId: string,
-): { room: Room; playerId: string } | { error: string; code?: string } {
-  const room = rooms.get(code.toUpperCase().trim())
-  if (!room) return { error: 'Hittade inget spel med den koden', code: 'NOT_FOUND' }
-
-  if (room.status !== 'lobby') {
-    return { error: 'Spelet har redan startat', code: 'STARTED' }
-  }
-
-  if (room.players.length >= MAX_PLAYERS) {
-    return { error: `Rummet är fullt (max ${MAX_PLAYERS})`, code: 'ROOM_FULL' }
-  }
-
-  const displayName =
-    name.trim().slice(0, 20) || (room.language === 'en' ? 'Player' : 'Spelare')
+export function joinRoom(code: string, name: string, socketId: string) {
+  const room = getRoom(code)
+  if (!room) return { error: 'Rummet finns inte', code: 'NOT_FOUND' as const }
+  if (room.status !== 'lobby') return { error: 'Spelet har redan startat', code: 'STARTED' as const }
+  if (room.players.length >= MAX_PLAYERS) return { error: 'Rummet är fullt', code: 'FULL' as const }
 
   const playerId = crypto.randomUUID()
-  room.players.push({
+  const player: Player = {
     id: playerId,
-    name: displayName,
+    name: name.trim().slice(0, 20) || (room.language === 'en' ? 'Player' : 'Spelare'),
     score: 0,
     connected: true,
     playing: true,
-    avatarDataUrl: null,
-    ability: null,
-    doodleDone: false,
-  })
+  }
+  room.players.push(player)
   socketToPlayer.set(socketId, { code: room.code, playerId })
   touch(room)
   return { room, playerId }
 }
 
-export function reconnectSocket(
-  code: string,
-  playerId: string,
-  socketId: string,
-): Room | { error: string } {
-  const room = rooms.get(code.toUpperCase().trim())
-  if (!room) return { error: 'Rummet finns inte' }
+export function reconnectSocket(code: string, playerId: string, socketId: string) {
+  const room = getRoom(code)
+  if (!room) return { error: 'Rummet finns inte', code: 'NOT_FOUND' as const }
   const player = room.players.find((p) => p.id === playerId)
-  if (!player) return { error: 'Spelaren hittades inte' }
-
+  if (!player) return { error: 'Spelaren finns inte', code: 'NO_PLAYER' as const }
   cancelDisconnectTimer(room.code, playerId)
-  for (const [sid, binding] of socketToPlayer) {
-    if (binding.code === room.code && binding.playerId === playerId) {
-      socketToPlayer.delete(sid)
-    }
+  for (const [sid, b] of socketToPlayer) {
+    if (b.code === room.code && b.playerId === playerId) socketToPlayer.delete(sid)
   }
-  socketToPlayer.set(socketId, { code: room.code, playerId })
   player.connected = true
+  socketToPlayer.set(socketId, { code: room.code, playerId })
   touch(room)
   return room
 }
 
-export function disconnectSocket(socketId: string): Room | null {
+export function disconnectSocket(socketId: string) {
   const binding = socketToPlayer.get(socketId)
   if (!binding) return null
   socketToPlayer.delete(socketId)
-  const room = rooms.get(binding.code)
+  const room = getRoom(binding.code)
   if (!room) return null
   const player = room.players.find((p) => p.id === binding.playerId)
-  if (!player) return null
-
+  if (!player) return room
   player.connected = false
-  touch(room)
-
-  const key = playerKey(room.code, player.id)
-  cancelDisconnectTimer(room.code, player.id)
+  cancelDisconnectTimer(room.code, binding.playerId)
+  const key = playerKey(room.code, binding.playerId)
   disconnectTimers.set(
     key,
     setTimeout(() => {
       disconnectTimers.delete(key)
-      const r = rooms.get(binding.code)
+      const r = getRoom(binding.code)
       if (!r) return
+      const still = [...socketToPlayer.values()].some(
+        (b) => b.code === binding.code && b.playerId === binding.playerId,
+      )
+      if (still) return
       const p = r.players.find((x) => x.id === binding.playerId)
-      if (!p || p.connected) return
-      if (r.status === 'lobby') {
-        r.players = r.players.filter((x) => x.id !== p.id)
-        if (r.hostId === p.id && r.players.length > 0) {
-          r.hostId = r.players[0]!.id
-        }
-        if (r.players.length === 0) rooms.delete(r.code)
-      }
+      if (p) p.connected = false
       touch(r)
     }, DISCONNECT_GRACE_MS),
   )
-
+  touch(room)
   return room
 }
 
@@ -364,10 +200,11 @@ export function setHostPlaying(code: string, playerId: string, playing: boolean)
   const room = getRoom(code)
   if (!room) return { error: 'Rummet finns inte' }
   if (room.hostId !== playerId) return { error: 'Bara värden' }
-  if (room.status !== 'lobby') return { error: 'Kan bara ändras i lobbyn' }
-  room.hostPlays = playing
+  if (room.status !== 'lobby') return { error: 'Spelet körs redan' }
   const host = room.players.find((p) => p.id === room.hostId)
-  if (host) host.playing = playing
+  if (!host) return { error: 'Ingen värd' }
+  host.playing = Boolean(playing)
+  room.hostPlays = host.playing
   touch(room)
   return room
 }
@@ -390,74 +227,169 @@ export function setPublicLobby(code: string, playerId: string, isPublic: boolean
   return room
 }
 
-export function setGameOptions(
-  code: string,
-  playerId: string,
-  opts: { maxRounds?: number; fightSeconds?: number; doodleSeconds?: number },
-) {
+export function setGameOptions(code: string, playerId: string, opts: { maxRounds?: number }) {
   const room = getRoom(code)
   if (!room) return { error: 'Rummet finns inte' }
   if (room.hostId !== playerId) return { error: 'Bara värden' }
-  if (room.status !== 'lobby') return { error: 'Kan bara ändras i lobbyn' }
-  if (opts.maxRounds != null) room.maxRounds = Math.min(7, Math.max(1, Math.round(opts.maxRounds)))
-  if (opts.fightSeconds != null)
-    room.fightSeconds = Math.min(180, Math.max(30, Math.round(opts.fightSeconds)))
-  if (opts.doodleSeconds != null)
-    room.doodleSeconds = Math.min(30, Math.max(8, Math.round(opts.doodleSeconds)))
+  if (opts.maxRounds != null) room.maxRounds = Math.min(8, Math.max(1, Math.round(opts.maxRounds)))
   touch(room)
   return room
 }
 
-function beginDoodle(room: Room) {
-  room.status = 'doodle'
+function pickDrawer(room: Room) {
+  const playing = playingPlayers(room)
+  if (playing.length === 0) return null
+  return playing[(room.roundIndex - 1) % playing.length]!
+}
+
+function beginDraw(room: Room) {
   room.roundIndex += 1
-  room.arenaId = pickArena(room.arenaId)
-  room.fight = null
-  room.lastEvent = null
-  for (const p of room.players) {
-    p.avatarDataUrl = null
-    p.ability = null
-    p.doodleDone = !p.playing
+  const drawer = pickDrawer(room)
+  if (!drawer) {
+    room.status = 'lobby'
+    room.round = null
+    room.phaseEndsAt = 0
+    return
   }
-  // No doodle timer — fight starts when every playing player marks ready
-  room.phaseEndsAt = 0
+  const history = room.round?.usedPromptHistory ?? []
+  const prompt = pickPrompt(room.language, history)
+  const round: RoundState = {
+    drawerId: drawer.id,
+    saboteurId: '',
+    prompt,
+    missions: {},
+    originalUrl: null,
+    sabotagedUrl: null,
+    guessOptions: [],
+    guesses: {},
+    votes: {},
+    usedPromptHistory: [...history, prompt].slice(-40),
+  }
+  room.round = round
+  room.status = 'draw'
+  room.phaseEndsAt = Date.now() + DRAW_MS
   touch(room)
 }
 
-function pushEvent(
-  room: Room,
-  event: Omit<import('./types.js').CombatEvent, 'seq' | 'at'> & { at?: number },
-) {
-  const seq = (room.lastEvent?.seq ?? 0) + 1
-  room.lastEvent = {
-    ...event,
-    at: event.at ?? Date.now(),
-    seq,
-    actorName: event.actorName,
-  }
-}
-
-function beginFight(room: Room) {
-  room.status = 'fight'
-  room.fight = emptyFight(room)
-  room.lastEvent = null
-  room.phaseEndsAt = Date.now() + room.fightSeconds * 1000
-  touch(room)
-}
-
-function beginResults(room: Room) {
-  room.status = 'results'
-  room.phaseEndsAt = Date.now() + RESULTS_MS
-  // Placeholder scoring: +1 for each connected playing fighter still "alive" (hp > 0)
-  if (room.fight) {
-    for (const f of room.fight.fighters) {
-      if (f.hp > 0) {
-        const p = room.players.find((x) => x.id === f.playerId)
-        if (p) p.score += 1
+function dealMissions(room: Room) {
+  const round = room.round
+  if (!round) return
+  const candidates = playingPlayers(room).filter((p) => p.id !== round.drawerId)
+  if (candidates.length === 0) return
+  const saboteur = candidates[Math.floor(Math.random() * candidates.length)]!
+  round.saboteurId = saboteur.id
+  const sabMission = pickSabotageMission()
+  const usedBluff: string[] = []
+  const missions: Record<string, PlayerMission> = {}
+  for (const p of candidates) {
+    if (p.id === saboteur.id) {
+      missions[p.id] = {
+        id: sabMission.id,
+        kind: 'sabotage',
+        label: missionLabel(sabMission, room.language),
+      }
+    } else {
+      const bluff = pickBluffMission(usedBluff)
+      usedBluff.push(bluff.id)
+      missions[p.id] = {
+        id: bluff.id,
+        kind: 'bluff',
+        label: missionLabel(bluff, room.language),
       }
     }
   }
+  round.missions = missions
+}
+
+function beginSabotage(room: Room) {
+  if (!room.round?.originalUrl) {
+    // Nothing drawn — skip to next round
+    advanceAfterReveal(room)
+    return
+  }
+  dealMissions(room)
+  room.status = 'sabotage'
+  room.phaseEndsAt = Date.now() + SABOTAGE_MS
   touch(room)
+}
+
+function beginGuess(room: Room) {
+  const round = room.round
+  if (!round) return
+  if (!round.sabotagedUrl) round.sabotagedUrl = round.originalUrl
+  round.guessOptions = guessOptions(round.prompt, room.language, 6)
+  round.guesses = {}
+  room.status = 'guess'
+  room.phaseEndsAt = Date.now() + GUESS_MS
+  touch(room)
+}
+
+function beginVote(room: Room) {
+  if (!room.round) return
+  room.round.votes = {}
+  room.status = 'vote'
+  room.phaseEndsAt = Date.now() + VOTE_MS
+  touch(room)
+}
+
+function scoreRound(room: Room) {
+  const round = room.round
+  if (!round) return
+  const guessers = playingPlayers(room).filter((p) => p.id !== round.drawerId)
+  const correctIds: string[] = []
+  for (const g of guessers) {
+    const guess = round.guesses[g.id]
+    if (guess && normalizeGuess(guess) === normalizeGuess(round.prompt)) {
+      correctIds.push(g.id)
+      g.score += 1
+    }
+  }
+  const half = Math.ceil(guessers.length / 2)
+  const majorityCorrect = correctIds.length >= half && guessers.length > 0
+  const drawer = room.players.find((p) => p.id === round.drawerId)
+  if (drawer && majorityCorrect) drawer.score += 2
+
+  const voters = playingPlayers(room).filter((p) => p.id !== round.saboteurId)
+  const correctVoters: string[] = []
+  let wrongMajority = 0
+  let rightMajority = 0
+  for (const v of voters) {
+    const vote = round.votes[v.id]
+    if (!vote) continue
+    if (vote === round.saboteurId) {
+      correctVoters.push(v.id)
+      v.score += 1
+      rightMajority += 1
+    } else {
+      wrongMajority += 1
+    }
+  }
+  const saboteur = room.players.find((p) => p.id === round.saboteurId)
+  const sabotageWorked = !majorityCorrect || wrongMajority > rightMajority
+  if (saboteur && sabotageWorked) saboteur.score += 3
+
+  // stash for reveal UI via toPublicRoom derived fields
+  ;(round as RoundState & { _correctGuessers?: string[]; _correctVoters?: string[] })._correctGuessers =
+    correctIds
+  ;(round as RoundState & { _correctGuessers?: string[]; _correctVoters?: string[] })._correctVoters =
+    correctVoters
+}
+
+function beginReveal(room: Room) {
+  scoreRound(room)
+  room.status = 'reveal'
+  room.phaseEndsAt = Date.now() + REVEAL_MS
+  touch(room)
+}
+
+function advanceAfterReveal(room: Room) {
+  if (room.roundIndex >= room.maxRounds) {
+    room.status = 'results'
+    room.phaseEndsAt = Date.now() + RESULTS_MS
+    touch(room)
+    return
+  }
+  beginDraw(room)
 }
 
 export function startGame(code: string, playerId: string) {
@@ -476,479 +408,103 @@ export function startGame(code: string, playerId: string) {
           : `Behöver minst ${MIN_PLAYERS} spelare`,
     }
   }
-  if (room.status === 'lobby') {
-    room.roundIndex = 0
+  if (room.status === 'results') {
     for (const p of room.players) p.score = 0
+    room.roundIndex = 0
   }
-  beginDoodle(room)
+  room.round = null
+  beginDraw(room)
   return room
 }
 
-export function submitDoodle(code: string, playerId: string, imageDataUrl: string) {
+export function submitDrawing(code: string, playerId: string, imageDataUrl: string) {
   const room = getRoom(code)
   if (!room) return { error: 'Rummet finns inte' }
-  if (room.status !== 'doodle') return { error: 'Inte doodle-fas' }
+  if (room.status !== 'draw' || !room.round) return { error: 'Inte ritfas' }
+  if (room.round.drawerId !== playerId) return { error: 'Du ritar inte nu' }
+  const img = sanitizeImage(imageDataUrl)
+  if (!img) return { error: 'Ogiltig bild' }
+  room.round.originalUrl = img
+  beginSabotage(room)
+  return room
+}
+
+export function submitSabotage(code: string, playerId: string, imageDataUrl: string) {
+  const room = getRoom(code)
+  if (!room) return { error: 'Rummet finns inte' }
+  if (room.status !== 'sabotage' || !room.round) return { error: 'Inte sabotage-fas' }
+  if (room.round.saboteurId !== playerId) return { error: 'Du är inte sabotören' }
+  const img = sanitizeImage(imageDataUrl)
+  if (!img) return { error: 'Ogiltig bild' }
+  room.round.sabotagedUrl = img
+  beginGuess(room)
+  return room
+}
+
+export function submitGuess(code: string, playerId: string, guess: string) {
+  const room = getRoom(code)
+  if (!room) return { error: 'Rummet finns inte' }
+  if (room.status !== 'guess' || !room.round) return { error: 'Inte gissningsfas' }
+  if (room.round.drawerId === playerId) return { error: 'Ritaren gissar inte' }
   const player = room.players.find((p) => p.id === playerId)
-  if (!player || !player.playing) return { error: 'Du spelar inte' }
-
-  const raw = String(imageDataUrl ?? '')
-  if (!raw.startsWith('data:image/') || raw.length > 800_000) {
-    return { error: 'Ogiltig bild' }
-  }
-
-  player.avatarDataUrl = raw
-  player.doodleDone = true
+  if (!player?.playing) return { error: 'Du spelar inte' }
+  const cleaned = String(guess ?? '').trim().slice(0, 40)
+  if (!cleaned) return { error: 'Tom gissning' }
+  if (!room.round.guessOptions.includes(cleaned)) return { error: 'Ogiltig gissning' }
+  room.round.guesses[playerId] = cleaned
   touch(room)
-
-  const needed = playingPlayers(room)
-  if (needed.every((p) => p.doodleDone)) {
-    beginFight(room)
-  }
+  const need = playingPlayers(room).filter((p) => p.id !== room.round!.drawerId)
+  if (need.every((p) => room.round!.guesses[p.id])) beginVote(room)
   return room
 }
 
-export function playerInput(
-  code: string,
-  playerId: string,
-  input: {
-    move?: -1 | 0 | 1
-    jump?: boolean
-    jumpRelease?: boolean
-    punch?: boolean
-    ability?: boolean
-  },
-): { error: string } | { room: Room; syncFight: boolean } {
+export function submitVote(code: string, playerId: string, targetId: string) {
   const room = getRoom(code)
   if (!room) return { error: 'Rummet finns inte' }
-  if (room.status !== 'fight' || !room.fight) return { error: 'Inte fight-fas' }
-  const fighter = room.fight.fighters.find((f) => f.playerId === playerId)
-  if (!fighter) return { error: 'Ingen fighter' }
-  const actor = room.players.find((p) => p.id === playerId)
-
-  const now = Date.now()
-  if (fighter.frozenUntil > now) return { room, syncFight: false }
-
-  let important = Boolean(input.jump || input.punch || input.ability)
-
-  // Store raw stick intent; invert is applied each tick. Don't snap vx — accel/friction does.
-  if (input.move !== undefined) {
-    fighter.moveAxis = input.move
-    if (input.move !== 0) {
-      const facing =
-        fighter.invertUntil > now ? ((-input.move) as -1 | 1) : input.move
-      fighter.facing = facing > 0 ? 1 : -1
-    }
-  }
-
-  if (input.jump) {
-    fighter.jumpHeld = true
-    fighter.jumpBufferUntil = now + JUMP_BUFFER_MS
-    const canJump = fighter.grounded || fighter.coyoteUntil > now
-    if (canJump) {
-      fighter.vy = JUMP_V
-      fighter.grounded = false
-      fighter.coyoteUntil = 0
-      fighter.jumpBufferUntil = 0
-      important = true
-    }
-  }
-
-  if (input.jumpRelease) {
-    fighter.jumpHeld = false
-    // Cut jump short while still rising (Mario variable height)
-    if (fighter.vy < -2) {
-      fighter.vy *= 0.42
-      important = true
-    }
-  }
-
-  if (input.punch && fighter.punchCooldownUntil <= now) {
-    fighter.punchCooldownUntil = now + 320
-    for (const other of room.fight.fighters) {
-      if (other.playerId === playerId) continue
-      const dx = other.x - fighter.x
-      const dy = other.y - fighter.y
-      const reach = fighter.giantUntil > now ? 78 : 52
-      if (Math.abs(dx) < reach && Math.abs(dy) < 50 && Math.sign(dx || fighter.facing) === fighter.facing) {
-        const dmg = fighter.giantUntil > now ? 16 : 10
-        other.vx += fighter.facing * 10
-        other.vy = Math.min(other.vy, -5)
-        other.grounded = false
-        other.coyoteUntil = 0
-        breakCombo(other)
-        const combo = bumpCombo(fighter, now)
-        const pts = hitPoints(combo) * scoreMult(room.fight)
-        if (actor) actor.score += pts
-        const ko = hurtFighter(room, other, dmg, {
-          killerId: playerId,
-          killerName: actor?.name,
-        })
-        if (!ko) {
-          pushEvent(room, {
-            kind: combo >= 3 ? 'combo' : 'hit',
-            actorId: playerId,
-            actorName: actor?.name ?? '?',
-            targetId: other.playerId,
-            targetName: room.players.find((p) => p.id === other.playerId)?.name ?? '?',
-            damage: dmg,
-            combo,
-            points: pts,
-          })
-        } else {
-          // Enrich KO toast with combo if any
-          if (room.lastEvent?.kind === 'ko') {
-            room.lastEvent.combo = combo
-            room.lastEvent.points = pts
-          }
-        }
-        room.fight.shakeUntil = now + 350
-        important = true
-      }
-    }
-  }
-
-  if (input.ability) {
-    const player = room.players.find((p) => p.id === playerId)
-    if (player?.ability) {
-      const ability = player.ability
-      const targetId = applyAbility(room, playerId, ability)
-      player.ability = null
-      const target = targetId ? room.players.find((p) => p.id === targetId) : undefined
-      pushEvent(room, {
-        kind: 'ability',
-        actorId: playerId,
-        actorName: actor?.name ?? '?',
-        targetId: targetId ?? undefined,
-        targetName: target?.name,
-        ability,
-      })
-      room.fight.shakeUntil = now + 280
-      important = true
-    }
-  }
-
-  if (important) touch(room)
-  // Stick nudges ride the fightTick stream — only actions need an immediate push
-  return { room, syncFight: important }
-}
-
-function applyAbility(room: Room, fromId: string, ability: AbilityId): string | null {
-  if (!room.fight) return null
-  const now = Date.now()
-  const layout = ARENA_LAYOUTS[room.arenaId]
-  const others = room.fight.fighters.filter((f) => f.playerId !== fromId)
-  const pick = others[Math.floor(Math.random() * others.length)]
-  switch (ability) {
-    case 'teleport':
-      if (pick) {
-        const spot = layout.spawns[Math.floor(Math.random() * layout.spawns.length)]!
-        pick.x = spot.x
-        pick.y = spot.y
-        pick.vx = 0
-        pick.vy = 0
-        pick.hitFlashUntil = now + 400
-        return pick.playerId
-      }
-      break
-    case 'freeze':
-      if (pick) {
-        pick.frozenUntil = now + 2500
-        return pick.playerId
-      }
-      break
-    case 'invert':
-      if (pick) {
-        pick.invertUntil = now + 4000
-        return pick.playerId
-      }
-      break
-    case 'giant': {
-      const self = room.fight.fighters.find((f) => f.playerId === fromId)
-      if (self) self.giantUntil = now + 5000
-      return fromId
-    }
-    case 'inkblot':
-      if (pick) {
-        pick.blindUntil = now + 3000
-        pick.hitFlashUntil = now + 400
-        return pick.playerId
-      }
-      break
-  }
-  return null
-}
-
-/** Physics tick ~45 Hz when polled at 22ms */
-export function tickFight(room: Room) {
-  if (room.status !== 'fight' || !room.fight) return
-  const fight = room.fight
-  if (!fight.hazards) fight.hazards = []
-  if (fight.chaos === undefined) fight.chaos = null
-  if (fight.suddenDeath === undefined) fight.suddenDeath = false
-  const layout = ARENA_LAYOUTS[fight.arenaId]
-  fight.tick += 1
-  const now = Date.now()
-
-  // Final 15s sudden death
-  if (!fight.suddenDeath && room.phaseEndsAt > 0 && room.phaseEndsAt - now <= SUDDEN_DEATH_MS) {
-    fight.suddenDeath = true
-    fight.shakeUntil = now + 700
-    pushEvent(room, {
-      kind: 'sudden',
-      actorId: 'arena',
-      actorName: 'Arena',
-    })
-  }
-
-  if (fight.chaos && fight.chaos.endsAt <= now) fight.chaos = null
-
-  const gravMul = fight.chaos?.kind === 'lowgrav' ? 0.42 : 1
-  const wind = fight.chaos?.kind === 'wind' ? fight.chaos.dir * 2.4 : 0
-  const quake = fight.chaos?.kind === 'quake'
-  const frenzy = fight.suddenDeath
-
-  for (const f of fight.fighters) {
-    if (f.jumpHeld === undefined) f.jumpHeld = false
-    if (f.jumpBufferUntil === undefined) f.jumpBufferUntil = 0
-    if (f.combo === undefined) f.combo = 0
-    if (f.comboUntil === undefined) f.comboUntil = 0
-    if (f.combo > 0 && f.comboUntil <= now) breakCombo(f)
-
-    if (f.frozenUntil > now) {
-      f.vx = 0
-      f.vy = 0
-      f.moveAxis = 0
-      f.jumpHeld = false
-      continue
-    }
-
-    let axis = f.moveAxis
-    if (f.invertUntil > now) axis = (-axis) as -1 | 0 | 1
-    const maxSp = f.giantUntil > now ? MAX_RUN * 0.82 : MAX_RUN
-
-    if (axis !== 0) {
-      const target = axis * maxSp
-      const turning = f.vx !== 0 && Math.sign(f.vx) !== axis
-      const accel =
-        (f.grounded ? ACCEL_GROUND : ACCEL_AIR) * (turning && f.grounded ? 1.55 : 1)
-      if (f.vx < target) f.vx = Math.min(target, f.vx + accel)
-      else if (f.vx > target) f.vx = Math.max(target, f.vx - accel)
-      f.facing = axis > 0 ? 1 : -1
-    } else if (f.grounded) {
-      f.vx *= FRICTION_GROUND
-      if (Math.abs(f.vx) < 0.4) f.vx = 0
-    } else {
-      f.vx *= FRICTION_AIR
-    }
-
-    f.vx += wind
-    if (quake) f.vx += (Math.random() - 0.5) * 5
-
-    // Asymmetric gravity; release jump early → fall gravity while rising
-    let g = f.vy < 0 ? GRAVITY_UP : GRAVITY_DOWN
-    if (f.vy < 0 && !f.jumpHeld) g = GRAVITY_DOWN * 1.15
-    f.vy = Math.min(MAX_FALL, f.vy + g * gravMul)
-
-    f.x = clampX(f.x + f.vx)
-    const nextY = f.y + f.vy
-    const resolved = resolveVertical(f.x, nextY, f.vy, layout)
-    f.y = resolved.y
-    f.vy = resolved.vy
-    if (resolved.grounded) {
-      f.grounded = true
-      f.coyoteUntil = now + COYOTE_MS
-    } else {
-      f.grounded = false
-    }
-
-    // Jump buffer (press slightly before landing)
-    const canJump = f.grounded || f.coyoteUntil > now
-    if (f.jumpBufferUntil > now && canJump) {
-      f.vy = JUMP_V
-      f.grounded = false
-      f.coyoteUntil = 0
-      f.jumpBufferUntil = 0
-    }
-
-    if (inPit(f.x, f.y, layout) || f.y > 430) {
-      breakCombo(f)
-      respawnFighter(f, fight.arenaId, false)
-      const name = room.players.find((p) => p.id === f.playerId)?.name ?? '?'
-      pushEvent(room, {
-        kind: 'hit',
-        actorId: f.playerId,
-        actorName: name,
-        targetId: f.playerId,
-        targetName: name,
-        damage: 15,
-      })
-      fight.shakeUntil = now + 320
-    }
-  }
-
-  // Random arena chaos (wind / quake / low grav) — faster in sudden death
-  const chaosEvery = frenzy ? 55 : 110
-  const chaosChance = frenzy ? 0.85 : 0.62
-  if (fight.tick % chaosEvery === (frenzy ? 12 : 35) && !fight.chaos && Math.random() < chaosChance) {
-    const kinds: ChaosKind[] = ['wind', 'quake', 'lowgrav']
-    const kind = kinds[Math.floor(Math.random() * kinds.length)]!
-    fight.chaos = {
-      kind,
-      dir: kind === 'wind' ? (Math.random() < 0.5 ? -1 : 1) : 0,
-      endsAt: now + (kind === 'quake' ? 2800 : 4800),
-    }
-    if (kind === 'quake') fight.shakeUntil = Math.max(fight.shakeUntil, now + 2800)
-    pushEvent(room, {
-      kind: 'chaos',
-      actorId: 'arena',
-      actorName: 'Arena',
-      chaosKind: kind,
-    })
-  }
-
-  // Spawn dodge hazards
-  const hazardEvery = frenzy ? 26 : 48
-  const hazardMax = frenzy ? 6 : 4
-  const hazardChance = frenzy ? 0.9 : 0.72
-  if (fight.tick % hazardEvery === 0 && fight.hazards.length < hazardMax && Math.random() < hazardChance) {
-    const roll = Math.random()
-    let hazard: Hazard
-    if (roll < 0.42) {
-      hazard = {
-        id: crypto.randomUUID(),
-        kind: 'meteor',
-        x: 50 + Math.random() * (ARENA_W - 100),
-        y: -30,
-        size: 26 + Math.random() * 10,
-        vy: 0,
-        warnUntil: now + (frenzy ? 550 : 850),
-        endsAt: now + 4200,
-      }
-    } else if (roll < 0.72) {
-      const plat = layout.platforms[Math.floor(Math.random() * layout.platforms.length)]!
-      hazard = {
-        id: crypto.randomUUID(),
-        kind: 'spike',
-        x: plat.x + 16 + Math.random() * Math.max(8, plat.w - 32),
-        y: plat.y,
-        size: 20,
-        vy: 0,
-        warnUntil: now + (frenzy ? 420 : 650),
-        endsAt: now + 3200,
-      }
-    } else {
-      hazard = {
-        id: crypto.randomUUID(),
-        kind: 'beam',
-        x: 70 + Math.random() * (ARENA_W - 140),
-        y: 0,
-        size: 16,
-        vy: 0,
-        warnUntil: now + (frenzy ? 480 : 750),
-        endsAt: now + 2600,
-      }
-    }
-    fight.hazards.push(hazard)
-  }
-
-  // Update + collide hazards
-  const still: Hazard[] = []
-  for (const h of fight.hazards) {
-    if (h.endsAt <= now) continue
-    const active = h.warnUntil <= now
-    if (active && h.kind === 'meteor') {
-      h.vy = Math.min(15, h.vy + 0.55)
-      h.y += h.vy
-      if (h.y > 460) continue
-    }
-    if (active) {
-      for (const f of fight.fighters) {
-        if (f.frozenUntil > now) continue
-        let hit = false
-        if (h.kind === 'meteor') {
-          const dx = f.x - h.x
-          const dy = f.y - 24 - h.y
-          hit = dx * dx + dy * dy < (h.size + 22) * (h.size + 22)
-        } else if (h.kind === 'spike' && fight.tick % 6 === 0) {
-          hit = Math.abs(f.x - h.x) < h.size + 10 && f.y > h.y - 50 && f.y < h.y + 8
-        } else if (h.kind === 'beam' && fight.tick % 7 === 0) {
-          hit = Math.abs(f.x - h.x) < h.size + 14
-        }
-        if (hit) {
-          const dmg = h.kind === 'meteor' ? 20 : h.kind === 'spike' ? 14 : 10
-          breakCombo(f)
-          hurtFighter(room, f, dmg)
-          f.vx += (f.x < h.x ? -1 : 1) * 7
-          f.vy = Math.min(f.vy, -4)
-          f.grounded = false
-          if (h.kind === 'meteor') {
-            h.endsAt = now
-          }
-        }
-      }
-    }
-    if (h.endsAt > now) still.push(h)
-  }
-  fight.hazards = still
-
-  const crateEvery = frenzy ? 45 : 90
-  const crateMax = frenzy ? 4 : 3
-  if (fight.tick % crateEvery === 0 && fight.crates.length < crateMax) {
-    const spot = layout.crateSpots[Math.floor(Math.random() * layout.crateSpots.length)]!
-    const cluttered = fight.crates.some((c) => Math.abs(c.x - spot.x) < 40)
-    if (!cluttered) {
-      fight.crates.push({
-        id: crypto.randomUUID(),
-        x: spot.x,
-        y: spot.y - 18,
-        ability: ABILITIES[Math.floor(Math.random() * ABILITIES.length)]!,
-      })
-    }
-  }
-
-  for (const f of fight.fighters) {
-    const idx = fight.crates.findIndex(
-      (c) => Math.abs(c.x - f.x) < 36 && Math.abs(c.y - (f.y - 24)) < 44,
-    )
-    if (idx >= 0) {
-      const crate = fight.crates[idx]!
-      const player = room.players.find((p) => p.id === f.playerId)
-      if (player && !player.ability) {
-        player.ability = crate.ability
-        fight.crates.splice(idx, 1)
-        pushEvent(room, {
-          kind: 'loot',
-          actorId: f.playerId,
-          actorName: player.name,
-          ability: crate.ability,
-        })
-        fight.shakeUntil = now + 200
-      }
-    }
-  }
-
-  // No touch() here — persist mid-fight every tick hammered Redis; phase/input still touch
+  if (room.status !== 'vote' || !room.round) return { error: 'Inte röstrunda' }
+  const player = room.players.find((p) => p.id === playerId)
+  if (!player?.playing) return { error: 'Du spelar inte' }
+  const target = room.players.find((p) => p.id === targetId && p.playing)
+  if (!target) return { error: 'Ogiltig röst' }
+  if (targetId === playerId) return { error: 'Kan inte rösta på dig själv' }
+  room.round.votes[playerId] = targetId
+  touch(room)
+  const need = playingPlayers(room)
+  if (need.every((p) => room.round!.votes[p.id])) beginReveal(room)
+  return room
 }
 
 export function onPhaseTimeout(room: Room) {
-  // Doodle has no timeout — players ready up individually via submitDoodle
-  if (room.status === 'doodle') {
-    room.phaseEndsAt = 0
+  if (room.status === 'draw') {
+    if (!room.round?.originalUrl) {
+      // Skip empty draw
+      advanceAfterReveal(room)
+      return
+    }
+    beginSabotage(room)
     return
   }
-  if (room.status === 'fight') {
-    beginResults(room)
+  if (room.status === 'sabotage') {
+    beginGuess(room)
+    return
+  }
+  if (room.status === 'guess') {
+    beginVote(room)
+    return
+  }
+  if (room.status === 'vote') {
+    beginReveal(room)
+    return
+  }
+  if (room.status === 'reveal') {
+    advanceAfterReveal(room)
     return
   }
   if (room.status === 'results') {
-    if (room.roundIndex >= room.maxRounds) {
-      room.status = 'lobby'
-      room.phaseEndsAt = 0
-      room.fight = null
-      touch(room)
-      return
-    }
-    beginDoodle(room)
+    room.status = 'lobby'
+    room.phaseEndsAt = 0
+    room.round = null
+    touch(room)
   }
 }
 
@@ -956,20 +512,11 @@ export function roomsNeedingTick(): Room[] {
   const now = Date.now()
   const out: Room[] = []
   for (const room of rooms.values()) {
-    if (
-      room.phaseEndsAt > 0 &&
-      room.phaseEndsAt <= now &&
-      room.status !== 'lobby' &&
-      room.status !== 'doodle'
-    ) {
+    if (room.phaseEndsAt > 0 && room.phaseEndsAt <= now && room.status !== 'lobby') {
       out.push(room)
     }
   }
   return out
-}
-
-export function roomsInFight(): Room[] {
-  return [...rooms.values()].filter((r) => r.status === 'fight')
 }
 
 export function rematch(code: string, playerId: string) {
@@ -979,14 +526,8 @@ export function rematch(code: string, playerId: string) {
   room.status = 'lobby'
   room.roundIndex = 0
   room.phaseEndsAt = 0
-  room.fight = null
-  for (const p of room.players) {
-    p.score = 0
-    p.avatarDataUrl = null
-    p.ability = null
-    p.doodleDone = false
-  }
-  room.lastEvent = null
+  room.round = null
+  for (const p of room.players) p.score = 0
   touch(room)
   return room
 }
@@ -998,34 +539,17 @@ export function backToLobby(code: string, playerId: string) {
 export function pruneIdleRooms() {
   const now = Date.now()
   for (const [code, room] of rooms) {
-    if (now - room.updatedAt > ROOM_IDLE_MS) {
-      rooms.delete(code)
-    }
+    if (now - room.updatedAt > ROOM_IDLE_MS) rooms.delete(code)
   }
 }
 
 export function hydrateRooms(list: Room[]) {
   rooms.clear()
   for (const room of list) {
-    const fight =
-      room.status === 'fight' && room.fight
-        ? {
-            ...room.fight,
-            hazards: room.fight.hazards ?? [],
-            chaos: room.fight.chaos ?? null,
-            suddenDeath: room.fight.suddenDeath ?? false,
-            fighters: room.fight.fighters.map((f) => ({
-              ...f,
-              combo: f.combo ?? 0,
-              comboUntil: f.comboUntil ?? 0,
-            })),
-          }
-        : null
     rooms.set(room.code, {
       ...room,
-      lastEvent: room.lastEvent ?? null,
       players: room.players.map((p) => ({ ...p, connected: false })),
-      fight,
+      round: room.status === 'lobby' || room.status === 'results' ? room.round : room.round,
     })
   }
 }
@@ -1048,37 +572,67 @@ export function listPublicLobbies(opts?: { language?: Lang | null; limit?: numbe
     }))
 }
 
-export function toFightTick(room: Room): import('./types.js').FightTickPayload | null {
-  if (room.status !== 'fight' || !room.fight) return null
-  const fight = room.fight
-  const abilities: Record<string, AbilityId | null> = {}
-  for (const p of room.players) {
-    if (p.playing) abilities[p.id] = p.ability
+function toPublicRound(room: Room, viewerId: string): PublicRound | null {
+  const round = room.round
+  if (!round) return null
+  const reveal = room.status === 'reveal' || room.status === 'results'
+  const youAreDrawer = round.drawerId === viewerId
+  const youAreSaboteur = round.saboteurId === viewerId
+  const showPrompt =
+    reveal || (room.status === 'draw' && youAreDrawer)
+  const yourMission =
+    room.status === 'sabotage' && !youAreDrawer ? round.missions[viewerId] ?? null : null
+
+  const extra = round as RoundState & {
+    _correctGuessers?: string[]
+    _correctVoters?: string[]
   }
+
   return {
-    code: room.code,
-    phaseEndsAt: room.phaseEndsAt,
-    lastEvent: room.lastEvent,
-    scores: [...room.players]
-      .filter((p) => p.playing)
-      .map((p) => ({ playerId: p.id, name: p.name, score: p.score }))
-      .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)),
-    abilities,
-    fight: {
-      tick: fight.tick,
-      suddenDeath: fight.suddenDeath,
-      shakeUntil: fight.shakeUntil,
-      fighters: fight.fighters,
-      crates: fight.crates,
-      hazards: fight.hazards,
-      chaos: fight.chaos,
-    },
+    drawerId: round.drawerId,
+    saboteurId: reveal ? round.saboteurId : null,
+    prompt: showPrompt ? round.prompt : null,
+    originalUrl: reveal || room.status === 'sabotage' ? round.originalUrl : round.originalUrl,
+    // During draw: no image yet on TV until submitted; during sabotage TV can show original dimmed
+    // During guess/vote: only sabotaged; during reveal: both
+    sabotagedUrl:
+      room.status === 'guess' || room.status === 'vote' || reveal
+        ? round.sabotagedUrl
+        : null,
+    guessOptions: room.status === 'guess' || reveal ? round.guessOptions : [],
+    guessesCount: Object.keys(round.guesses).length,
+    votesCount: Object.keys(round.votes).length,
+    yourMission,
+    youAreDrawer,
+    youAreSaboteur: reveal ? youAreSaboteur : false,
+    youCanDraw: room.status === 'draw' && youAreDrawer && !round.originalUrl,
+    youCanSabotage: room.status === 'sabotage' && youAreSaboteur && !round.sabotagedUrl,
+    youCanGuess:
+      room.status === 'guess' && !youAreDrawer && !round.guesses[viewerId],
+    youCanVote: room.status === 'vote' && !round.votes[viewerId],
+    yourGuess: round.guesses[viewerId] ?? null,
+    yourVote: round.votes[viewerId] ?? null,
+    correctGuessers: reveal ? extra._correctGuessers ?? [] : [],
+    votedSaboteurCorrectly: reveal ? extra._correctVoters ?? [] : [],
   }
 }
 
 export function toPublicRoom(room: Room, viewerId: string): PublicRoom {
   const you = room.players.find((p) => p.id === viewerId)
   const playing = playingPlayers(room)
+  const pubRound = toPublicRound(room, viewerId)
+
+  // TV-friendly: during draw show nothing until done; expose original for TV wait screen after submit
+  if (pubRound && room.status === 'draw' && room.round?.originalUrl) {
+    pubRound.originalUrl = room.round.originalUrl
+  }
+  if (pubRound && room.status === 'sabotage') {
+    pubRound.originalUrl = room.round?.originalUrl ?? null
+  }
+  if (pubRound && (room.status === 'guess' || room.status === 'vote')) {
+    pubRound.originalUrl = null
+  }
+
   return {
     code: room.code,
     hostId: room.hostId,
@@ -1089,33 +643,24 @@ export function toPublicRoom(room: Room, viewerId: string): PublicRoom {
       score: p.score,
       connected: p.connected,
       playing: p.playing,
-      avatarDataUrl: p.avatarDataUrl,
-      doodleDone: p.doodleDone,
-      hasAbility: Boolean(p.ability),
     })),
     language: room.language,
     status: room.status,
     isPublic: room.isPublic,
     roundIndex: room.roundIndex,
     maxRounds: room.maxRounds,
-    fightSeconds: room.fightSeconds,
-    doodleSeconds: room.doodleSeconds,
-    phaseEndsAt: room.status === 'doodle' ? 0 : room.phaseEndsAt,
-    arenaId: room.arenaId,
-    fight: room.fight,
-    lastEvent: room.lastEvent,
+    phaseEndsAt: room.phaseEndsAt,
+    round: pubRound,
     youAreHost: room.hostId === viewerId,
     youPlaying: Boolean(you?.playing),
-    yourAbility: you?.ability ?? null,
-    yourAvatar: you?.avatarDataUrl ?? null,
-    doodleDoneCount: playing.filter((p) => p.doodleDone).length,
-    doodleNeeded: playing.length,
     scores: [...room.players]
       .filter((p) => p.playing)
       .map((p) => ({ playerId: p.id, name: p.name, score: p.score }))
       .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)),
     minPlayers: MIN_PLAYERS,
     playingCount: playing.length,
+    drawSeconds: Math.round(DRAW_MS / 1000),
+    sabotageSeconds: Math.round(SABOTAGE_MS / 1000),
   }
 }
 

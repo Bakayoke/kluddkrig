@@ -1,27 +1,62 @@
 import { useEffect, useRef, useState } from 'react'
-import { canvasToTransparentPng } from './punchWhite'
 
 type Props = {
   disabled?: boolean
   onSubmit: (dataUrl: string) => void
   submitLabel: string
+  /** When set, load under drawings (sabotage pass) */
+  baseImageUrl?: string | null
+  paper?: boolean
 }
 
 const COLORS = ['#1a0f2e', '#ff6b9d', '#5ce1e6', '#ffe566', '#7c5cff', '#ff8a3d', '#ffffff']
 
-export function DoodleCanvas({ disabled, onSubmit, submitLabel }: Props) {
+export function DoodleCanvas({
+  disabled,
+  onSubmit,
+  submitLabel,
+  baseImageUrl,
+  paper = true,
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const drawing = useRef(false)
   const [color, setColor] = useState(COLORS[0]!)
   const [submitted, setSubmitted] = useState(false)
+  const [ready, setReady] = useState(!baseImageUrl)
 
   useEffect(() => {
+    setSubmitted(false)
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
-  }, [])
+
+    const paintPaper = () => {
+      if (paper) {
+        ctx.fillStyle = '#fff6e8'
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+      } else {
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+      }
+    }
+
+    paintPaper()
+
+    if (!baseImageUrl) {
+      setReady(true)
+      return
+    }
+
+    setReady(false)
+    const img = new Image()
+    img.onload = () => {
+      paintPaper()
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+      setReady(true)
+    }
+    img.onerror = () => setReady(true)
+    img.src = baseImageUrl
+  }, [baseImageUrl, paper])
 
   function pos(e: React.PointerEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current!
@@ -33,13 +68,12 @@ export function DoodleCanvas({ disabled, onSubmit, submitLabel }: Props) {
   }
 
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
-    if (disabled || submitted) return
+    if (disabled || submitted || !ready) return
     drawing.current = true
     e.currentTarget.setPointerCapture(e.pointerId)
     const ctx = canvasRef.current?.getContext('2d')
     if (!ctx) return
     const p = pos(e)
-    // White acts as eraser so “white background” never sticks to the avatar
     if (color === '#ffffff') {
       ctx.globalCompositeOperation = 'destination-out'
       ctx.strokeStyle = 'rgba(0,0,0,1)'
@@ -71,18 +105,28 @@ export function DoodleCanvas({ disabled, onSubmit, submitLabel }: Props) {
   }
 
   function clear() {
-    if (disabled || submitted) return
+    if (disabled || submitted || !ready) return
     const canvas = canvasRef.current
     const ctx = canvas?.getContext('2d')
     if (!canvas || !ctx) return
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    if (paper) {
+      ctx.fillStyle = '#fff6e8'
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+    } else {
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+    }
+    if (baseImageUrl) {
+      const img = new Image()
+      img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+      img.src = baseImageUrl
+    }
   }
 
   function submit() {
     const canvas = canvasRef.current
-    if (!canvas || submitted) return
+    if (!canvas || submitted || !ready) return
     setSubmitted(true)
-    onSubmit(canvasToTransparentPng(canvas))
+    onSubmit(canvas.toDataURL('image/png'))
   }
 
   return (
@@ -106,15 +150,25 @@ export function DoodleCanvas({ disabled, onSubmit, submitLabel }: Props) {
             style={{ background: c === '#ffffff' ? undefined : c }}
             aria-label={c === '#ffffff' ? 'Eraser' : c}
             title={c === '#ffffff' ? 'Suddgummi' : c}
-            disabled={disabled || submitted}
+            disabled={disabled || submitted || !ready}
             onClick={() => setColor(c)}
           />
         ))}
-        <button type="button" className="btn ghost" disabled={disabled || submitted} onClick={clear}>
+        <button
+          type="button"
+          className="btn ghost"
+          disabled={disabled || submitted || !ready}
+          onClick={clear}
+        >
           Clear
         </button>
       </div>
-      <button type="button" className="btn primary wide" disabled={disabled || submitted} onClick={submit}>
+      <button
+        type="button"
+        className="btn primary wide"
+        disabled={disabled || submitted || !ready}
+        onClick={submit}
+      >
         {submitLabel}
       </button>
     </div>

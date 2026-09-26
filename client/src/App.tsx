@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  backToLobby,
   clearSession,
   createGame,
   ensureSessionBound,
@@ -9,19 +8,18 @@ import {
   loadSession,
   rematch,
   saveSession,
-  sendInput,
-  setFightTickHandler,
   setHostPlaying,
   setLanguage,
   setPublicLobby,
   setRoomHandler,
-  applyFightTick,
   startGame,
-  submitDoodle,
+  submitDrawing,
+  submitGuess,
+  submitSabotage,
+  submitVote,
   subscribeConnection,
   type ConnState,
 } from './api'
-import { ArenaView } from './ArenaView'
 import { DoodleCanvas } from './DoodleCanvas'
 import { fmt, t } from './i18n'
 import { JoinQr } from './qr'
@@ -73,14 +71,6 @@ function useCountdown(endsAt: number) {
     return () => clearInterval(id)
   }, [endsAt])
   return left
-}
-
-function vibrate(pattern: number | number[]) {
-  try {
-    navigator.vibrate?.(pattern)
-  } catch {
-    /* ignore */
-  }
 }
 
 function Home({
@@ -192,22 +182,34 @@ function JoinScreen({
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (code.length !== 4) {
-      setPreview(null)
-      return
+    if (step !== 'name' || code.length !== 4) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const p = await fetchRoomPreview(code)
+        if (!cancelled) setPreview(p)
+      } catch {
+        if (!cancelled) setPreview(null)
+      }
+    })()
+    return () => {
+      cancelled = true
     }
-    void fetchRoomPreview(code)
-      .then(setPreview)
-      .catch(() => setPreview(null))
-  }, [code])
+  }, [step, code])
 
   async function goName(e: React.FormEvent) {
     e.preventDefault()
-    if (code.length < 4) return
+    const c = code.trim().toUpperCase()
+    if (c.length !== 4) {
+      setError(lang === 'en' ? 'Enter a 4-letter code' : 'Ange en 4-bokstavskod')
+      return
+    }
+    setCode(c)
     setStep('name')
+    setError(null)
   }
 
-  async function doJoin(e: React.FormEvent) {
+  async function join(e: React.FormEvent) {
     e.preventDefault()
     setBusy(true)
     setError(null)
@@ -226,64 +228,44 @@ function JoinScreen({
   }
 
   return (
-    <div className="home join-screen">
+    <div className="home">
       <header className="hero compact">
         <p className="brand">Kluddkrig</p>
         <p className="tagline">{ui.joinTitle}</p>
       </header>
 
-      {step === 'code' && (
+      {step === 'code' ? (
         <form className="panel" onSubmit={(e) => void goName(e)}>
           <label>
             {ui.code}
             <input
               value={code}
               maxLength={4}
-              autoFocus
-              onChange={(e) => setCode(e.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4))}
-              placeholder="ABCD"
+              autoCapitalize="characters"
+              onChange={(e) => setCode(e.target.value.toUpperCase())}
             />
           </label>
-          <button type="submit" className="btn primary wide" disabled={code.length < 4}>
+          <button type="submit" className="btn primary wide">
             {ui.join}
           </button>
           <button type="button" className="btn ghost wide" onClick={onBack}>
             {ui.back}
           </button>
         </form>
-      )}
-
-      {step === 'name' && (
-        <form className="panel" onSubmit={(e) => void doJoin(e)}>
-          <h2>
+      ) : (
+        <form className="panel" onSubmit={(e) => void join(e)}>
+          <p className="muted">
             {ui.joinCodeHint} <span className="code-inline">{code}</span>
-          </h2>
-          {preview && (
-            <p className="muted">
-              {preview.hostName} · {preview.playerCount} {ui.previewPlayers}
-            </p>
-          )}
+            {preview ? ` · ${preview.playerCount} ${ui.previewPlayers}` : ''}
+          </p>
           <label>
             {ui.name}
-            <input
-              value={name}
-              maxLength={20}
-              autoFocus
-              autoComplete="nickname"
-              onChange={(e) => setName(e.target.value)}
-            />
+            <input value={name} maxLength={20} onChange={(e) => setName(e.target.value)} autoComplete="nickname" />
           </label>
           <button type="submit" className="btn primary wide" disabled={busy}>
             {ui.join}
           </button>
-          <button
-            type="button"
-            className="btn ghost wide"
-            onClick={() => {
-              setStep('code')
-              setError(null)
-            }}
-          >
+          <button type="button" className="btn ghost wide" onClick={() => setStep('code')}>
             {ui.back}
           </button>
         </form>
@@ -292,144 +274,6 @@ function JoinScreen({
       {error && <p className="error">{error}</p>}
     </div>
   )
-}
-
-function FightPad({
-  hasAbility,
-  abilityLabel,
-  noAbilityLabel,
-}: {
-  hasAbility: boolean
-  abilityLabel: string
-  noAbilityLabel: string
-}) {
-  const moveRef = useRef<-1 | 0 | 1>(0)
-  const lastSentRef = useRef<-1 | 0 | 1 | null>(null)
-  const stickRef = useRef<HTMLDivElement>(null)
-  const knobRef = useRef<HTMLDivElement>(null)
-  const activePtr = useRef<number | null>(null)
-
-  function emitMove(axis: -1 | 0 | 1, force = false) {
-    if (!force && lastSentRef.current === axis) return
-    lastSentRef.current = axis
-    sendInput({ move: axis })
-  }
-
-  useEffect(() => {
-    const id = setInterval(() => {
-      const axis = moveRef.current
-      if (axis !== 0) emitMove(axis, true)
-    }, 140)
-    return () => clearInterval(id)
-  }, [])
-
-  function setAxis(axis: -1 | 0 | 1, knobX = 0) {
-    const changed = moveRef.current !== axis
-    moveRef.current = axis
-    const knob = knobRef.current
-    if (knob) {
-      knob.style.transform = `translate(calc(-50% + ${knobX}px), -50%)`
-    }
-    if (changed) emitMove(axis)
-  }
-
-  function axisFromClientX(clientX: number): { axis: -1 | 0 | 1; knobX: number } {
-    const el = stickRef.current
-    if (!el) return { axis: 0, knobX: 0 }
-    const rect = el.getBoundingClientRect()
-    const cx = rect.left + rect.width / 2
-    const dx = Math.max(-48, Math.min(48, clientX - cx))
-    const dead = 14
-    if (dx < -dead) return { axis: -1, knobX: dx }
-    if (dx > dead) return { axis: 1, knobX: dx }
-    return { axis: 0, knobX: dx }
-  }
-
-  function onStickDown(e: React.PointerEvent<HTMLDivElement>) {
-    e.preventDefault()
-    activePtr.current = e.pointerId
-    e.currentTarget.setPointerCapture(e.pointerId)
-    const { axis, knobX } = axisFromClientX(e.clientX)
-    setAxis(axis, knobX)
-  }
-
-  function onStickMove(e: React.PointerEvent<HTMLDivElement>) {
-    if (activePtr.current !== e.pointerId) return
-    const { axis, knobX } = axisFromClientX(e.clientX)
-    setAxis(axis, knobX)
-  }
-
-  function onStickUp(e: React.PointerEvent<HTMLDivElement>) {
-    if (activePtr.current !== null && activePtr.current !== e.pointerId) return
-    activePtr.current = null
-    setAxis(0, 0)
-  }
-
-  return (
-    <div className="pad gamepad">
-      <div
-        ref={stickRef}
-        className="stick"
-        onPointerDown={onStickDown}
-        onPointerMove={onStickMove}
-        onPointerUp={onStickUp}
-        onPointerCancel={onStickUp}
-      >
-        <div ref={knobRef} className="stick-knob" />
-      </div>
-      <div className="pad-actions">
-        <button
-          type="button"
-          className="pad-btn action"
-          onPointerDown={(e) => {
-            e.preventDefault()
-            sendInput({ jump: true })
-          }}
-          onPointerUp={(e) => {
-            e.preventDefault()
-            sendInput({ jumpRelease: true })
-          }}
-          onPointerCancel={() => sendInput({ jumpRelease: true })}
-        >
-          ⤒
-        </button>
-        <button
-          type="button"
-          className="pad-btn action punch"
-          onPointerDown={(e) => {
-            e.preventDefault()
-            sendInput({ punch: true })
-          }}
-        >
-          ✊
-        </button>
-        <button
-          type="button"
-          className="pad-btn action loot"
-          disabled={!hasAbility}
-          onPointerDown={(e) => {
-            e.preventDefault()
-            if (hasAbility) sendInput({ ability: true })
-          }}
-        >
-          {hasAbility ? abilityLabel : noAbilityLabel}
-        </button>
-      </div>
-    </div>
-  )
-}
-
-const PAD_VIEWPORT =
-  'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover'
-
-function setViewportContent(content: string) {
-  let meta = document.querySelector('meta[name="viewport"]')
-  if (!meta) {
-    meta = document.createElement('meta')
-    meta.setAttribute('name', 'viewport')
-    document.head.appendChild(meta)
-  }
-  meta.setAttribute('content', content)
 }
 
 function isFullscreenActive() {
@@ -464,76 +308,35 @@ async function exitFullscreen() {
   }
 }
 
+function playerName(room: PublicRoom, id: string) {
+  return room.players.find((p) => p.id === id)?.name ?? '?'
+}
+
 function RoomView({
   room,
   playerId,
-  lang,
-  initialTv,
   onLeave,
+  startInTv,
 }: {
   room: PublicRoom
   playerId: string
-  lang: Lang
-  initialTv?: boolean
   onLeave: () => void
+  startInTv?: boolean
 }) {
-  const ui = t(lang)
-  const [tvMode, setTvMode] = useState(Boolean(initialTv))
+  const ui = t(room.language)
+  const [tvMode, setTvMode] = useState(Boolean(startInTv))
   const [fsActive, setFsActive] = useState(() => isFullscreenActive())
-  const [toast, setToast] = useState<{ text: string; kind: string } | null>(null)
-  const [flash, setFlash] = useState<string | null>(null)
-  const [shake, setShake] = useState(false)
-  const [padReady, setPadReady] = useState(false)
-  const lastEventSeq = useRef(0)
   const countdown = useCountdown(room.phaseEndsAt)
   const joinUrl = `${window.location.origin}?join=${room.code}`
+  const round = room.round
 
   useEffect(() => {
     document.body.classList.toggle('tv-mode', tvMode)
     return () => document.body.classList.remove('tv-mode')
   }, [tvMode])
 
-  const padMode = room.status === 'fight' && room.youPlaying && !tvMode
   useEffect(() => {
-    document.body.classList.toggle('pad-mode', padMode)
-    if (!padMode) setPadReady(false)
-    return () => document.body.classList.remove('pad-mode')
-  }, [padMode])
-
-  useEffect(() => {
-    if (!padMode || !padReady) return
-    setViewportContent(PAD_VIEWPORT)
-    const preventGesture = (e: Event) => e.preventDefault()
-    const preventPinch = (e: TouchEvent) => {
-      if (e.touches.length > 1) e.preventDefault()
-    }
-    document.addEventListener('gesturestart', preventGesture, { passive: false } as AddEventListenerOptions)
-    document.addEventListener('gesturechange', preventGesture, { passive: false } as AddEventListenerOptions)
-    document.addEventListener('gestureend', preventGesture, { passive: false } as AddEventListenerOptions)
-    document.addEventListener('touchmove', preventPinch, { passive: false })
-    return () => {
-      document.removeEventListener('gesturestart', preventGesture)
-      document.removeEventListener('gesturechange', preventGesture)
-      document.removeEventListener('gestureend', preventGesture)
-      document.removeEventListener('touchmove', preventPinch)
-    }
-  }, [padMode, padReady])
-
-  async function unlockPad() {
-    setViewportContent(PAD_VIEWPORT)
-    try {
-      await enterFullscreen()
-      setFsActive(isFullscreenActive())
-    } catch {
-      /* some phones block fullscreen outside Safari/Chrome quirks */
-    }
-    setPadReady(true)
-  }
-
-  useEffect(() => {
-    const onFs = () => {
-      setFsActive(isFullscreenActive())
-    }
+    const onFs = () => setFsActive(isFullscreenActive())
     document.addEventListener('fullscreenchange', onFs)
     document.addEventListener('webkitfullscreenchange', onFs as EventListener)
     return () => {
@@ -542,7 +345,6 @@ function RoomView({
     }
   }, [])
 
-  // Track "had fullscreen" so Escape exits TV mode properly
   const hadFs = useRef(false)
   useEffect(() => {
     if (fsActive) hadFs.current = true
@@ -552,126 +354,6 @@ function RoomView({
     }
   }, [fsActive, tvMode])
 
-  useEffect(() => {
-    const ev = room.lastEvent
-    if (!ev || ev.seq <= lastEventSeq.current) return
-    lastEventSeq.current = ev.seq
-    const involvesYou = ev.actorId === playerId || ev.targetId === playerId
-    const abilityName = ev.ability ? ui.abilityLabels[ev.ability] : ''
-
-    if (ev.kind === 'hit') {
-      const text =
-        ev.combo && ev.combo >= 2
-          ? fmt(ui.comboMsg, { actor: ev.actorName, n: ev.combo })
-          : fmt(ui.hitMsg, { actor: ev.actorName, target: ev.targetName ?? '?' })
-      setToast({ text, kind: ev.combo && ev.combo >= 2 ? 'combo' : 'hit' })
-      setShake(true)
-      if (involvesYou) {
-        vibrate(ev.targetId === playerId ? [50, 40, 80] : [25, 30, 40])
-        setFlash(ev.targetId === playerId ? 'hurt' : 'hit')
-      }
-      const t1 = setTimeout(() => setShake(false), 320)
-      const t2 = setTimeout(() => setToast(null), 1600)
-      const t3 = setTimeout(() => setFlash(null), 280)
-      return () => {
-        clearTimeout(t1)
-        clearTimeout(t2)
-        clearTimeout(t3)
-      }
-    }
-    if (ev.kind === 'combo') {
-      const text = fmt(ui.comboMsg, { actor: ev.actorName, n: ev.combo ?? 3 })
-      setToast({ text, kind: 'combo' })
-      setShake(true)
-      if (involvesYou) {
-        vibrate([30, 25, 30, 25, 50])
-        setFlash(ev.targetId === playerId ? 'hurt' : 'hit')
-      }
-      const t1 = setTimeout(() => setShake(false), 360)
-      const t2 = setTimeout(() => setToast(null), 1700)
-      const t3 = setTimeout(() => setFlash(null), 300)
-      return () => {
-        clearTimeout(t1)
-        clearTimeout(t2)
-        clearTimeout(t3)
-      }
-    }
-    if (ev.kind === 'loot') {
-      const text = fmt(ui.lootMsg, { actor: ev.actorName, ability: abilityName })
-      setToast({ text, kind: 'loot' })
-      if (ev.actorId === playerId) {
-        vibrate([30, 40, 30, 40, 60])
-        setFlash('loot')
-      }
-      const t2 = setTimeout(() => setToast(null), 1800)
-      const t3 = setTimeout(() => setFlash(null), 400)
-      return () => {
-        clearTimeout(t2)
-        clearTimeout(t3)
-      }
-    }
-    if (ev.kind === 'ability') {
-      const text = fmt(ui.abilityMsg, { actor: ev.actorName, ability: abilityName })
-      setToast({ text, kind: 'ability' })
-      setShake(true)
-      if (involvesYou) {
-        vibrate([60, 30, 60])
-        setFlash('ability')
-      }
-      const t1 = setTimeout(() => setShake(false), 280)
-      const t2 = setTimeout(() => setToast(null), 1800)
-      const t3 = setTimeout(() => setFlash(null), 350)
-      return () => {
-        clearTimeout(t1)
-        clearTimeout(t2)
-        clearTimeout(t3)
-      }
-    }
-    if (ev.kind === 'ko') {
-      const text =
-        ev.combo && ev.combo >= 3
-          ? fmt(ui.comboMsg, { actor: ev.actorName, n: ev.combo })
-          : fmt(ui.koMsg, { actor: ev.actorName, target: ev.targetName ?? '?' })
-      setToast({ text, kind: 'ko' })
-      setShake(true)
-      if (involvesYou) {
-        vibrate(ev.targetId === playerId ? [80, 40, 80, 40, 120] : [40, 30, 50])
-        setFlash(ev.targetId === playerId ? 'hurt' : 'hit')
-      }
-      const t1 = setTimeout(() => setShake(false), 400)
-      const t2 = setTimeout(() => setToast(null), 1800)
-      const t3 = setTimeout(() => setFlash(null), 320)
-      return () => {
-        clearTimeout(t1)
-        clearTimeout(t2)
-        clearTimeout(t3)
-      }
-    }
-    if (ev.kind === 'chaos' && ev.chaosKind) {
-      const label = ui.chaosLabels[ev.chaosKind] ?? ev.chaosKind
-      const text = fmt(ui.chaosMsg, { event: label })
-      setToast({ text, kind: 'chaos' })
-      if (ev.chaosKind === 'quake' || ev.chaosKind === 'meteor') setShake(true)
-      const t1 = setTimeout(() => setShake(false), 500)
-      const t2 = setTimeout(() => setToast(null), 2000)
-      return () => {
-        clearTimeout(t1)
-        clearTimeout(t2)
-      }
-    }
-    if (ev.kind === 'sudden') {
-      setToast({ text: ui.suddenMsg, kind: 'sudden' })
-      setShake(true)
-      vibrate([40, 30, 40, 30, 80, 40, 100])
-      const t1 = setTimeout(() => setShake(false), 700)
-      const t2 = setTimeout(() => setToast(null), 2400)
-      return () => {
-        clearTimeout(t1)
-        clearTimeout(t2)
-      }
-    }
-  }, [room.lastEvent, playerId, ui])
-
   async function toggleTvMode() {
     if (tvMode) {
       setTvMode(false)
@@ -680,22 +362,17 @@ function RoomView({
       setFsActive(false)
       return
     }
-    // Must run in the click handler — browsers require a user gesture
     await enterFullscreen()
     setFsActive(isFullscreenActive())
     setTvMode(true)
   }
 
-  async function ensureFullscreen() {
-    await enterFullscreen()
-    setFsActive(isFullscreenActive())
-  }
-
   const youPlaying = room.youPlaying
   const canStart = room.youAreHost && room.playingCount >= room.minPlayers
+  const drawerName = round ? playerName(room, round.drawerId) : ''
 
   return (
-    <div className={`room${shake ? ' room-shake' : ''}`}>
+    <div className="room">
       <header className="room-bar">
         <div>
           <p className="brand-sm">Kluddkrig</p>
@@ -718,14 +395,11 @@ function RoomView({
         </div>
       </header>
 
-      {toast && <div className={`combat-toast kind-${toast.kind}`}>{toast.text}</div>}
-      {flash && <div className={`screen-flash flash-${flash}`} aria-hidden />}
-
       {room.status === 'lobby' && (
         <>
           <div className="tv-lobby-stage">
             {tvMode && !fsActive && (
-              <button type="button" className="btn primary tv-fs-cta" onClick={() => void ensureFullscreen()}>
+              <button type="button" className="btn primary tv-fs-cta" onClick={() => void enterFullscreen()}>
                 {ui.tvFullscreen}
               </button>
             )}
@@ -742,7 +416,9 @@ function RoomView({
                 {room.players.map((p) => (
                   <li
                     key={p.id}
-                    className={`${p.playing ? 'is-playing' : 'is-hosting'}${p.connected ? '' : ' offline'}`}
+                    className={`${p.playing ? 'is-playing' : ''}${p.id === room.hostId ? ' is-hosting' : ''}${
+                      !p.connected ? ' offline' : ''
+                    }`}
                   >
                     <span className="tv-roster-name">{p.name}</span>
                     <span className="tv-roster-meta">
@@ -754,12 +430,10 @@ function RoomView({
               </ul>
               {room.youAreHost && (
                 <div className="tv-start">
-                  {!canStart && (
-                    <p className="muted">{fmt(ui.needPlayers, { n: room.minPlayers })}</p>
-                  )}
+                  {!canStart && <p className="muted">{fmt(ui.needPlayers, { n: room.minPlayers })}</p>}
                   <button
                     type="button"
-                    className="btn primary wide"
+                    className="btn primary"
                     disabled={!canStart}
                     onClick={() => void startGame()}
                   >
@@ -771,18 +445,18 @@ function RoomView({
           </div>
 
           <div className="lobby-grid hide-on-tv">
-            <div className="panel">
+            <section className="panel">
               <JoinQr url={joinUrl} size={200} alt={room.code} />
-              <p className="muted">{joinUrl}</p>
-            </div>
-            <div className="panel">
-              <h3>{ui.waiting}</h3>
+              <p className="muted">{ui.scanOnPhone}</p>
+            </section>
+            <section className="panel">
+              <h3>{ui.players}</h3>
               <ul className="player-list">
                 {room.players.map((p) => (
                   <li key={p.id}>
-                    <span>{p.name}</span>
-                    {!p.connected && <em>…</em>}
+                    {p.name}
                     {p.id === room.hostId && <strong> ★</strong>}
+                    {!p.connected && <span className="muted"> ({ui.offline})</span>}
                   </li>
                 ))}
               </ul>
@@ -814,114 +488,171 @@ function RoomView({
                   </button>
                 </div>
               )}
-            </div>
+            </section>
           </div>
         </>
       )}
 
-      {room.status === 'doodle' && (
+      {room.status !== 'lobby' && room.status !== 'results' && (
+        <p className="phase-meta">
+          {fmt(ui.round, { n: room.roundIndex, max: room.maxRounds })}
+          {room.phaseEndsAt > 0 ? ` · ${countdown}s` : ''}
+        </p>
+      )}
+
+      {room.status === 'draw' && round && (
         <section className="phase">
-          <h2>{ui.doodleTitle}</h2>
-          <p className="muted">
-            {fmt(ui.round, { n: room.roundIndex, max: room.maxRounds })} — {ui.doodleHint}
-          </p>
-          <p className="muted">
-            {fmt(ui.doodleReady, { done: room.doodleDoneCount, need: room.doodleNeeded })}
-          </p>
-          {tvMode ? (
-            <div className="avatar-grid">
-              {room.players
-                .filter((p) => p.playing)
-                .map((p) => (
-                  <div key={p.id} className="avatar-card">
-                    {p.avatarDataUrl ? (
-                      <img src={p.avatarDataUrl} alt={p.name} />
-                    ) : (
-                      <div className="avatar-empty">{p.doodleDone ? '✓' : '…'}</div>
-                    )}
-                    <span>{p.name}</span>
-                  </div>
-                ))}
+          <h2>{ui.drawTitle}</h2>
+          {(tvMode || !youPlaying || !round.youCanDraw) && (
+            <div className="stage-card">
+              <p className="stage-lead">{fmt(ui.drawWait, { name: drawerName })}</p>
+              {round.originalUrl && <img className="stage-art" src={round.originalUrl} alt="" />}
             </div>
-          ) : youPlaying ? (
-            room.players.find((p) => p.id === playerId)?.doodleDone ? (
-              <p>{ui.doodleWaiting}</p>
-            ) : (
-              <DoodleCanvas onSubmit={(url) => void submitDoodle(url)} submitLabel={ui.doodleDone} />
-            )
-          ) : (
-            <p className="muted">{ui.fightTvHint}</p>
+          )}
+          {youPlaying && round.youCanDraw && (
+            <>
+              <p className="prompt-card">
+                {ui.yourWord}: <strong>{round.prompt}</strong>
+              </p>
+              <p className="muted">{fmt(ui.drawHint, { n: countdown || room.drawSeconds })}</p>
+              <DoodleCanvas
+                submitLabel={ui.drawDone}
+                onSubmit={(url) => void submitDrawing(url)}
+              />
+            </>
+          )}
+          {youPlaying && round.youAreDrawer && !round.youCanDraw && (
+            <p className="muted">{ui.youDrew}</p>
           )}
         </section>
       )}
 
-      {room.status === 'fight' && room.fight && (
-        <section className="phase fight-phase">
-          {!padMode && (
-            <h2>
-              {ui.fightTitle} · {countdown}s · {ui.arena}: {room.arenaId}
-              {room.fight.suddenDeath ? ` · ${ui.suddenMsg}` : ''}
-            </h2>
-          )}
-          {(tvMode || !youPlaying) && (
-            <div className={`arena-wrap${room.fight.suddenDeath ? ' sudden' : ''}`}>
-              {room.fight.suddenDeath && <p className="sudden-banner">{ui.suddenMsg}</p>}
-              <ArenaView fight={room.fight} players={room.players} wide={tvMode} shake={shake} />
+      {room.status === 'sabotage' && round && (
+        <section className="phase">
+          <h2>{ui.sabotageTitle}</h2>
+          {(tvMode || !round.youCanSabotage) && (
+            <div className="stage-card">
+              <p className="stage-lead">{ui.sabotageWait}</p>
+              {round.originalUrl && <img className="stage-art dim" src={round.originalUrl} alt="" />}
             </div>
           )}
-          {youPlaying && !tvMode && (
+          {youPlaying && round.yourMission && !round.youCanSabotage && (
+            <div className="mission-card">
+              <p className="muted">{ui.sabotageHint}</p>
+              <p className="mission-label">{round.yourMission.label}</p>
+              <p className="muted">{ui.sabotageWait}</p>
+            </div>
+          )}
+          {youPlaying && round.youCanSabotage && round.yourMission && (
             <>
-              {padMode && !padReady && (
-                <button type="button" className="pad-unlock" onClick={() => void unlockPad()}>
-                  <strong>{ui.padUnlock}</strong>
-                  <span>{ui.padUnlockHint}</span>
-                </button>
-              )}
-              <div className={`fight-controls${padMode && !padReady ? ' locked' : ''}`}>
-                <div className="fight-hud">
-                  {(() => {
-                    const me = room.fight.fighters.find((f) => f.playerId === playerId)
-                    const hp = me?.hp ?? 0
-                    const combo = me && (me.comboUntil ?? 0) > Date.now() ? me.combo ?? 0 : 0
-                    return (
-                      <div className="hp-bar">
-                        <span>
-                          {ui.yourHp} {hp}
-                          {combo >= 2 ? ` · ${ui.yourCombo} x${combo}` : ''}
-                          {padMode ? ` · ${countdown}s` : ''}
-                          {room.fight.suddenDeath ? ' · ×2' : ''}
-                        </span>
-                        <div className="hp-track">
-                          <div className="hp-fill" style={{ width: `${hp}%` }} />
-                        </div>
-                      </div>
-                    )
-                  })()}
-                  <div className={`loot-chip${room.yourAbility ? ' ready' : ''}`}>
-                    {room.yourAbility
-                      ? `${ui.ability}: ${ui.abilityLabels[room.yourAbility]}`
-                      : ui.noAbility}
-                  </div>
-                </div>
-                {padMode && <p className="pad-rotate-hint">{ui.padLandscape}</p>}
-                {!padMode && <p className="muted">{ui.fightTvHint}</p>}
-                <FightPad
-                  hasAbility={Boolean(room.yourAbility)}
-                  abilityLabel={
-                    room.yourAbility ? ui.abilityLabels[room.yourAbility] : ui.ability
-                  }
-                  noAbilityLabel={ui.noAbility}
-                />
+              <div className="mission-card hot">
+                <p className="muted">{ui.sabotageHint}</p>
+                <p className="mission-label">{round.yourMission.label}</p>
               </div>
+              <DoodleCanvas
+                baseImageUrl={round.originalUrl}
+                submitLabel={ui.sabotageDone}
+                onSubmit={(url) => void submitSabotage(url)}
+              />
             </>
           )}
+        </section>
+      )}
+
+      {room.status === 'guess' && round && (
+        <section className="phase">
+          <h2>{ui.guessTitle}</h2>
+          <div className="stage-card">
+            {round.sabotagedUrl && <img className="stage-art" src={round.sabotagedUrl} alt="" />}
+            {(tvMode || !round.youCanGuess) && (
+              <p className="muted">
+                {ui.guessWait} ({round.guessesCount})
+              </p>
+            )}
+          </div>
+          {youPlaying && round.youCanGuess && (
+            <div className="choice-grid">
+              {round.guessOptions.map((opt) => (
+                <button
+                  key={opt}
+                  type="button"
+                  className="btn choice"
+                  onClick={() => void submitGuess(opt)}
+                >
+                  {opt}
+                </button>
+              ))}
+            </div>
+          )}
+          {youPlaying && round.yourGuess && <p className="muted">{ui.youGuessed}</p>}
+          {youPlaying && round.youAreDrawer && <p className="muted">{ui.youDrew}</p>}
+        </section>
+      )}
+
+      {room.status === 'vote' && round && (
+        <section className="phase">
+          <h2>{ui.voteTitle}</h2>
+          <div className="stage-card">
+            {round.sabotagedUrl && <img className="stage-art" src={round.sabotagedUrl} alt="" />}
+            {(tvMode || !round.youCanVote) && (
+              <p className="muted">
+                {ui.voteWait} ({round.votesCount})
+              </p>
+            )}
+          </div>
+          {youPlaying && round.youCanVote && (
+            <div className="choice-grid">
+              {room.players
+                .filter((p) => p.playing && p.id !== playerId)
+                .map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className="btn choice"
+                    onClick={() => void submitVote(p.id)}
+                  >
+                    {p.name}
+                  </button>
+                ))}
+            </div>
+          )}
+          {youPlaying && round.yourVote && <p className="muted">{ui.youVoted}</p>}
+        </section>
+      )}
+
+      {room.status === 'reveal' && round && (
+        <section className="phase reveal-phase">
+          <h2>{ui.revealTitle}</h2>
+          <div className="reveal-grid">
+            {round.originalUrl && (
+              <figure>
+                <figcaption>{ui.original}</figcaption>
+                <img className="stage-art" src={round.originalUrl} alt="" />
+              </figure>
+            )}
+            {round.sabotagedUrl && (
+              <figure>
+                <figcaption>{ui.sabotaged}</figcaption>
+                <img className="stage-art" src={round.sabotagedUrl} alt="" />
+              </figure>
+            )}
+          </div>
+          <p className="reveal-line">
+            {ui.theWord}: <strong>{round.prompt}</strong>
+          </p>
+          <p className="reveal-line">
+            {ui.theSaboteur}:{' '}
+            <strong>{round.saboteurId ? playerName(room, round.saboteurId) : '?'}</strong>
+          </p>
+          {countdown > 0 && <p className="muted">{ui.nextRound}</p>}
         </section>
       )}
 
       {room.status === 'results' && (
         <section className="phase">
           <h2>
-            {ui.resultsTitle} · {countdown}s
+            {ui.resultsTitle}
+            {room.phaseEndsAt > 0 ? ` · ${countdown}s` : ''}
           </h2>
           <h3>{ui.scores}</h3>
           <ol className="scores">
@@ -932,14 +663,8 @@ function RoomView({
               </li>
             ))}
           </ol>
-          {room.youAreHost && room.roundIndex >= room.maxRounds && (
+          {room.youAreHost && (
             <button type="button" className="btn primary" onClick={() => void rematch()}>
-              {ui.rematch}
-            </button>
-          )}
-          {room.roundIndex < room.maxRounds && <p className="muted">{ui.nextRound}</p>}
-          {room.youAreHost && room.roundIndex < room.maxRounds && (
-            <button type="button" className="btn ghost" onClick={() => void backToLobby()}>
               {ui.rematch}
             </button>
           )}
@@ -956,7 +681,7 @@ function RoomView({
   )
 }
 
-type Screen = 'home' | 'join'
+type Screen = 'home' | 'join' | 'room'
 
 export default function App() {
   const [lang, setLang] = useState<Lang>(() =>
@@ -980,18 +705,6 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (!playerId) {
-      setFightTickHandler(null)
-      return
-    }
-    const viewerId = playerId
-    setFightTickHandler((tick) => {
-      setRoom((prev) => (prev ? applyFightTick(prev, tick, viewerId) : prev))
-    })
-    return () => setFightTickHandler(null)
-  }, [playerId])
-
-  useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const joinParam = params.get('join')
     const joinCodeFromUrl =
@@ -1013,58 +726,63 @@ export default function App() {
         setRoom(res.room)
         setPlayerId(res.playerId)
         setLang(res.room.language)
+        setScreen('room')
       }
     })()
   }, [])
 
-  function enter(r: PublicRoom, pid: string, name: string, opts?: { tv?: boolean }) {
-    saveSession({ code: r.code, playerId: pid, name })
+  function enterRoom(r: PublicRoom, pid: string, name: string, asTvHost = false) {
     setRoom(r)
     setPlayerId(pid)
     setLang(r.language)
-    setStartInTv(Boolean(opts?.tv))
-    if (r.youAreHost) void setLanguage(lang)
+    setStartInTv(asTvHost)
+    saveSession({ code: r.code, playerId: pid, name })
+    setScreen('room')
   }
 
   const ui = t(lang)
 
   return (
     <div className="app">
-      <div className={`conn hide-on-tv ${conn}`}>
+      <p className={`conn ${conn}`}>
         {conn === 'connected' ? ui.connected : conn === 'connecting' ? ui.connecting : ui.disconnected}
-      </div>
-      {!room || !playerId ? (
-        screen === 'join' ? (
-          <JoinScreen
-            lang={lang}
-            initialCode={joinCode}
-            onJoined={(r, pid, name) => enter(r, pid, name)}
-            onBack={() => {
-              setScreen('home')
-              setJoinCode('')
-            }}
-          />
-        ) : (
-          <Home
-            lang={lang}
-            setLang={setLang}
-            onCreated={(r, pid, name, hostPlays) => enter(r, pid, name, { tv: !hostPlays })}
-            onOpenJoin={(code) => {
-              setJoinCode(code ?? '')
-              setScreen('join')
-            }}
-          />
-        )
-      ) : (
+      </p>
+
+      {screen === 'home' && (
+        <Home
+          lang={lang}
+          setLang={(l) => {
+            setLang(l)
+            void setLanguage(l)
+          }}
+          onCreated={(r, pid, name, hostPlays) => {
+            enterRoom(r, pid, name, !hostPlays)
+            void setLanguage(lang)
+          }}
+          onOpenJoin={(code) => {
+            setJoinCode(code ?? '')
+            setScreen('join')
+          }}
+        />
+      )}
+
+      {screen === 'join' && (
+        <JoinScreen
+          lang={lang}
+          initialCode={joinCode}
+          onJoined={(r, pid, name) => enterRoom(r, pid, name)}
+          onBack={() => setScreen('home')}
+        />
+      )}
+
+      {screen === 'room' && room && playerId && (
         <RoomView
           room={room}
           playerId={playerId}
-          lang={lang}
-          initialTv={startInTv}
+          startInTv={startInTv}
           onLeave={() => {
             setRoom(null)
             setPlayerId(null)
-            setStartInTv(false)
             setScreen('home')
           }}
         />

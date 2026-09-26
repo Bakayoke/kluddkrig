@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Kluddkrig — doodle-avatar arena brawler for parties",
+  "description": "Kluddkrig — draw, sabotage, and catch the saboteur",
   "scripts": {
     "dev": "concurrently -n server,client -c coral,cyan \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "tsx watch server/index.ts",
