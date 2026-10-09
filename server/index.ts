@@ -32,6 +32,13 @@ import {
   toPublicRoom,
 } from './rooms.js'
 import { buildSnapshot, flushPersist, initPersist, loadSnapshot, persistDiagnostics, scheduleSave } from './persist.js'
+import {
+  adminTokenOk,
+  getStatsSnapshot,
+  initStats,
+  recordGameStart,
+  renderStatsHtml,
+} from './stats.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.PORT) || 3001
@@ -65,7 +72,7 @@ app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
     name: 'kluddkrig',
-    version: '2026-09-26-party-meta',
+    version: '2026-10-09-admin-stats',
     rooms: allRooms().size,
     persist: persistDiagnostics(),
   })
@@ -91,6 +98,32 @@ app.get('/api/room/:code/preview', (req, res) => {
     hostName: room.players.find((p) => p.id === room.hostId)?.name ?? '?',
     isPublic: room.isPublic,
   })
+})
+
+app.get('/api/admin/stats', async (req, res) => {
+  const token =
+    (typeof req.query.token === 'string' && req.query.token) ||
+    (typeof req.headers['x-admin-token'] === 'string' && req.headers['x-admin-token']) ||
+    (req.headers.authorization?.startsWith('Bearer ')
+      ? req.headers.authorization.slice(7)
+      : null)
+  if (!adminTokenOk(token)) {
+    res.status(401).json({ error: 'Unauthorized' })
+    return
+  }
+  if (!process.env.ADMIN_STATS_TOKEN?.trim()) {
+    res.status(503).json({ error: 'ADMIN_STATS_TOKEN not configured' })
+    return
+  }
+  const snap = await getStatsSnapshot()
+  const wantsHtml =
+    req.query.format === 'html' ||
+    (typeof req.headers.accept === 'string' && req.headers.accept.includes('text/html'))
+  if (wantsHtml) {
+    res.type('html').send(renderStatsHtml(snap))
+    return
+  }
+  res.json(snap)
 })
 
 const clientDist = path.join(__dirname, '../client/dist')
@@ -227,6 +260,7 @@ io.on('connection', (socket) => {
     if (!binding) return ack?.({ ok: false, error: 'Inte ansluten' })
     const result = startGame(binding.code, binding.playerId)
     if ('error' in result) return ack?.({ ok: false, error: result.error })
+    void recordGameStart()
     ack?.({ ok: true })
     broadcastRoom(result.code)
   })
@@ -305,6 +339,8 @@ setInterval(() => {
 
 async function boot() {
   const persist = await initPersist()
+  const stats = await initStats()
+  console.log(`Stats: ${stats.name}${stats.configured ? '' : ' (ephemeral — set REDIS_URL to keep counts)'}`)
   const persistNow = () => scheduleSave(buildSnapshot(allRooms().values()))
   setPersistHook(persistNow)
 
