@@ -244,14 +244,14 @@ export const STEALTH_MISSIONS: MissionDef[] = [
 ]
 
 export const BLUFF_MISSIONS: MissionDef[] = [
-  { id: 'cloud', kind: 'bluff', difficulty: 'mild', sv: 'Lägg till ett litet moln', en: 'Add a tiny cloud' },
-  { id: 'flower', kind: 'bluff', difficulty: 'mild', sv: 'Rita in en blomma', en: 'Draw a flower somewhere' },
-  { id: 'spark', kind: 'bluff', difficulty: 'mild', sv: 'Lägg till tre stjärnor', en: 'Add three stars' },
-  { id: 'bird', kind: 'bluff', difficulty: 'mild', sv: 'Lägg till en fågel i bakgrunden', en: 'Add a bird in the background' },
-  { id: 'dots', kind: 'bluff', difficulty: 'mild', sv: 'Strö prickar över allt', en: 'Scatter dots everywhere' },
-  { id: 'wave', kind: 'bluff', difficulty: 'mild', sv: 'Lägg till en våg', en: 'Add a wave' },
-  { id: 'moon', kind: 'bluff', difficulty: 'mild', sv: 'Rita in en måne', en: 'Draw a moon' },
-  { id: 'arrow', kind: 'bluff', difficulty: 'mild', sv: 'Rita en pil som pekar fel', en: 'Draw an arrow pointing the wrong way' },
+  { id: 'clearer', kind: 'bluff', difficulty: 'mild', sv: 'Gör motivet tydligare', en: 'Make the subject clearer' },
+  { id: 'color', kind: 'bluff', difficulty: 'mild', sv: 'Förbättra färgerna', en: 'Improve the colors' },
+  { id: 'detail', kind: 'bluff', difficulty: 'mild', sv: 'Lägg till tre små hjälpsamma detaljer', en: 'Add three small helpful details' },
+  { id: 'frame', kind: 'bluff', difficulty: 'mild', sv: 'Rita en fin ram runt', en: 'Draw a nice frame around it' },
+  { id: 'outline', kind: 'bluff', difficulty: 'mild', sv: 'Förstärk konturerna', en: 'Strengthen the outlines' },
+  { id: 'smile', kind: 'bluff', difficulty: 'mild', sv: 'Se till att någon ler', en: 'Make sure someone is smiling' },
+  { id: 'fixup', kind: 'bluff', difficulty: 'mild', sv: 'Fixa det som ser kladdigt ut', en: 'Clean up the messy parts' },
+  { id: 'bg', kind: 'bluff', difficulty: 'mild', sv: 'Gör bakgrunden snyggare', en: 'Make the background nicer' },
 ]
 
 export function promptsFor(lang: Lang, pack: PromptPack = 'classic') {

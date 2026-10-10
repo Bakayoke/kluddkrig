@@ -11,6 +11,10 @@ let rejoinInFlight: Promise<{
   error?: string
 } | null> | null = null
 let connectionListenersAttached = false
+/** Only apply room events matching this code (set when entering a room). */
+let activeRoomCode: string | null = null
+/** Bumps when session is cleared/replaced so in-flight rejoins are ignored. */
+let sessionEpoch = 0
 
 type RoomHandler = (room: PublicRoom) => void
 let onRoomHandler: RoomHandler | null = null
@@ -34,6 +38,7 @@ export function getSocket() {
       void ensureSessionBound()
     })
     socket.on('room', (room: PublicRoom) => {
+      if (!activeRoomCode || room.code !== activeRoomCode) return
       onRoomHandler?.(room)
     })
   }
@@ -111,12 +116,20 @@ export async function ensureSessionBound(
   if (!session) return null
   if (rejoinInFlight) return rejoinInFlight
 
+  const epochAtStart = sessionEpoch
+  const wanted = `${session.code}:${session.playerId}`
+
   rejoinInFlight = (async () => {
     let last: { ok: boolean; playerId?: string; room?: PublicRoom; error?: string } = {
       ok: false,
       error: 'offline',
     }
     for (let i = 0; i < retries; i++) {
+      if (sessionEpoch !== epochAtStart) return { ok: false, error: 'session replaced' }
+      const current = loadSession()
+      if (!current || `${current.code}:${current.playerId}` !== wanted) {
+        return { ok: false, error: 'session replaced' }
+      }
       try {
         const s = getSocket()
         if (!s.connected) {
@@ -126,8 +139,13 @@ export async function ensureSessionBound(
             setTimeout(() => resolve(), 3000)
           })
         }
+        if (sessionEpoch !== epochAtStart) return { ok: false, error: 'session replaced' }
         last = await ack<OkMaybe>('rejoin', { code: session.code, playerId: session.playerId })
-        if (last.ok) return last
+        if (sessionEpoch !== epochAtStart) return { ok: false, error: 'session replaced' }
+        if (last.ok && last.room) {
+          activeRoomCode = last.room.code
+          return last
+        }
       } catch {
         last = { ok: false, error: 'reconnect failed' }
       }
@@ -149,16 +167,28 @@ export async function createGame(
   isPublic: boolean,
   hostPlays: boolean,
 ) {
-  return ack<OkMaybe & { playerId: string; room: PublicRoom }>('create', {
+  clearSession()
+  const res = await ack<OkMaybe & { playerId: string; room: PublicRoom }>('create', {
     name,
     language,
     isPublic,
     hostPlays,
   })
+  if (res.ok && res.room && res.playerId) {
+    activeRoomCode = res.room.code
+    saveSession({ code: res.room.code, playerId: res.playerId, name })
+  }
+  return res
 }
 
 export async function joinGame(code: string, name: string) {
-  return ack<OkMaybe & { playerId: string; room: PublicRoom }>('join', { code, name })
+  clearSession()
+  const res = await ack<OkMaybe & { playerId: string; room: PublicRoom }>('join', { code, name })
+  if (res.ok && res.room && res.playerId) {
+    activeRoomCode = res.room.code
+    saveSession({ code: res.room.code, playerId: res.playerId, name })
+  }
+  return res
 }
 
 export async function setHostPlaying(playing: boolean) {
@@ -232,9 +262,14 @@ export function loadSession(): Session | null {
 }
 
 export function saveSession(session: Session) {
+  sessionEpoch += 1
+  activeRoomCode = session.code
   localStorage.setItem(SESSION_KEY, JSON.stringify(session))
 }
 
 export function clearSession() {
+  sessionEpoch += 1
+  activeRoomCode = null
+  rejoinInFlight = null
   localStorage.removeItem(SESSION_KEY)
 }

@@ -104,6 +104,25 @@ export function getBinding(socketId: string) {
   return socketToPlayer.get(socketId)
 }
 
+/** Drop prior socket→player binding (e.g. creating/joining a new room). */
+export function releaseSocket(socketId: string): string | null {
+  const prev = socketToPlayer.get(socketId)
+  if (!prev) return null
+  socketToPlayer.delete(socketId)
+  const room = getRoom(prev.code)
+  if (room) {
+    const player = room.players.find((p) => p.id === prev.playerId)
+    if (player) {
+      const stillBound = [...socketToPlayer.values()].some(
+        (b) => b.code === prev.code && b.playerId === prev.playerId,
+      )
+      if (!stillBound) player.connected = false
+    }
+    touch(room)
+  }
+  return prev.code
+}
+
 export function createRoom(
   hostName: string,
   socketId: string,
@@ -111,6 +130,7 @@ export function createRoom(
   language: Lang = 'sv',
   isPublic = false,
 ): { room: Room; playerId: string } {
+  releaseSocket(socketId)
   const code = uniqueCode()
   const playerId = crypto.randomUUID()
   const host: Player = {
@@ -148,6 +168,7 @@ export function joinRoom(code: string, name: string, socketId: string) {
   if (room.status !== 'lobby') return { error: 'Spelet har redan startat', code: 'STARTED' as const }
   if (room.players.length >= MAX_PLAYERS) return { error: 'Rummet är fullt', code: 'FULL' as const }
 
+  releaseSocket(socketId)
   const playerId = crypto.randomUUID()
   const player: Player = {
     id: playerId,
@@ -843,7 +864,12 @@ function toPublicRound(room: Room, viewerId: string): PublicRound | null {
     editsNeeded,
     yourMission:
       room.status === 'sabotage' && youPlaying && mission
-        ? { id: mission.id, label: mission.label, difficulty: mission.difficulty }
+        ? {
+            id: mission.id,
+            label: mission.label,
+            difficulty: mission.difficulty,
+            role: mission.kind === 'sabotage' ? 'saboteur' : 'helper',
+          }
         : null,
     yourEditBaseUrl:
       room.status === 'sabotage' && artistForYou && !youSubmittedEdit

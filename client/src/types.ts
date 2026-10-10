@@ -17,6 +17,7 @@ export type PublicMission = {
   id: string
   label: string
   difficulty: MissionDifficulty
+  role: 'saboteur' | 'helper'
 }
 
 export type PublicPlayer = {

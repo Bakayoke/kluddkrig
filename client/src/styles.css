@@ -1087,6 +1087,26 @@ body.pad-mode .phase h2 {
 .mission-card.hot {
   background: var(--yellow);
 }
+.mission-card.saboteur.hot {
+  background: #ffb4c8;
+  border-color: #1a0f2e;
+}
+.mission-card.helper {
+  background: #e8f7f0;
+}
+.role-banner {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  margin: 0 0 0.35rem;
+}
+.mission-card.saboteur .role-banner {
+  color: #9b1038;
+}
+.mission-card.helper .role-banner {
+  color: #0d6b45;
+}
 .mission-label {
   font-family: var(--font-display);
   font-size: 1.4rem;

@@ -72,7 +72,7 @@ app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
     name: 'kluddkrig',
-    version: '2026-10-09-admin-stats',
+    version: '2026-10-10-role-clarity',
     rooms: allRooms().size,
     persist: persistDiagnostics(),
   })
@@ -162,9 +162,17 @@ function broadcastRoom(roomCode: string) {
   }
 }
 
+function leaveAllGameRooms(socket: import('socket.io').Socket) {
+  for (const room of socket.rooms) {
+    if (room !== socket.id) socket.leave(room)
+  }
+}
+
 io.on('connection', (socket) => {
   socket.on('create', ({ name, hostPlays, language, isPublic }, ack) => {
     try {
+      const prev = getBinding(socket.id)
+      leaveAllGameRooms(socket)
       const { room, playerId } = createRoom(
         name,
         socket.id,
@@ -173,6 +181,7 @@ io.on('connection', (socket) => {
         Boolean(isPublic),
       )
       socket.join(room.code)
+      if (prev?.code && prev.code !== room.code) broadcastRoom(prev.code)
       const payload = { ok: true as const, playerId, room: toPublicRoom(room, playerId) }
       ack?.(payload)
       socket.emit('room', payload.room)
@@ -183,12 +192,15 @@ io.on('connection', (socket) => {
 
   socket.on('join', ({ code, name }, ack) => {
     try {
+      const prev = getBinding(socket.id)
       const result = joinRoom(String(code ?? ''), String(name ?? ''), socket.id)
       if ('error' in result) {
         ack?.({ ok: false, error: result.error, code: result.code })
         return
       }
+      leaveAllGameRooms(socket)
       socket.join(result.room.code)
+      if (prev?.code && prev.code !== result.room.code) broadcastRoom(prev.code)
       const payload = {
         ok: true as const,
         playerId: result.playerId,
@@ -204,6 +216,7 @@ io.on('connection', (socket) => {
 
   socket.on('rejoin', ({ code, playerId }, ack) => {
     try {
+      leaveAllGameRooms(socket)
       const result = reconnectSocket(String(code ?? ''), String(playerId ?? ''), socket.id)
       if ('error' in result) {
         ack?.({ ok: false, ...result })

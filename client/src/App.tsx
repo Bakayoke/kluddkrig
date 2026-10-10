@@ -583,9 +583,20 @@ function RoomView({
           )}
           {youPlaying && round.youCanEdit && round.yourMission && (
             <>
-              <div className={`mission-card hot diff-${round.yourMission.difficulty}`}>
-                <p className="muted">{ui.sabotageHint}</p>
-                <p className="diff-badge">{difficultyLabel(ui, round.yourMission.difficulty)}</p>
+              <div
+                className={`mission-card ${
+                  round.yourMission.role === 'saboteur' ? 'hot saboteur' : 'helper'
+                } diff-${round.yourMission.difficulty}`}
+              >
+                <p className="role-banner">
+                  {round.yourMission.role === 'saboteur' ? ui.saboteurRole : ui.helperRole}
+                </p>
+                <p className="muted">
+                  {round.yourMission.role === 'saboteur' ? ui.saboteurHint : ui.helperHint}
+                </p>
+                {round.yourMission.role === 'saboteur' && (
+                  <p className="diff-badge">{difficultyLabel(ui, round.yourMission.difficulty)}</p>
+                )}
                 <p className="mission-label">{round.yourMission.label}</p>
               </div>
               <DoodleCanvas
@@ -596,11 +607,16 @@ function RoomView({
             </>
           )}
           {youPlaying && !round.youCanEdit && (
-            <div className="mission-card">
+            <div
+              className={`mission-card ${
+                round.yourMission?.role === 'saboteur' ? 'saboteur' : 'helper'
+              }`}
+            >
               {round.yourMission && (
                 <>
-                  <p className="muted">{ui.sabotageHint}</p>
-                  <p className="diff-badge">{difficultyLabel(ui, round.yourMission.difficulty)}</p>
+                  <p className="role-banner">
+                    {round.yourMission.role === 'saboteur' ? ui.saboteurRole : ui.helperRole}
+                  </p>
                   <p className="mission-label">{round.yourMission.label}</p>
                 </>
               )}
@@ -902,6 +918,7 @@ export default function App() {
           playerId={playerId}
           startInTv={startInTv}
           onLeave={() => {
+            clearSession()
             setRoom(null)
             setPlayerId(null)
             setScreen('home')

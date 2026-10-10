@@ -93,6 +93,8 @@ export type PublicMission = {
   id: string
   label: string
   difficulty: MissionDifficulty
+  /** Private to this player — helpers improve, saboteur sabotages */
+  role: 'saboteur' | 'helper'
 }
 
 export type PublicRound = {
