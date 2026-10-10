@@ -1,5 +1,5 @@
 import { io, type Socket } from 'socket.io-client'
-import type { Lang, PublicRoom, Session } from './types'
+import type { Lang, PublicRoom, ReactionEvent, Session } from './types'
 
 const API_BASE = (import.meta.env.VITE_SOCKET_URL || '').replace(/\/$/, '')
 
@@ -17,7 +17,9 @@ let activeRoomCode: string | null = null
 let sessionEpoch = 0
 
 type RoomHandler = (room: PublicRoom) => void
+type ReactionHandler = (reaction: ReactionEvent) => void
 let onRoomHandler: RoomHandler | null = null
+let onReactionHandler: ReactionHandler | null = null
 
 export function getSocket() {
   if (!socket) {
@@ -40,6 +42,9 @@ export function getSocket() {
     socket.on('room', (room: PublicRoom) => {
       if (!activeRoomCode || room.code !== activeRoomCode) return
       onRoomHandler?.(room)
+    })
+    socket.on('reaction', (reaction: ReactionEvent) => {
+      onReactionHandler?.(reaction)
     })
   }
 
@@ -73,6 +78,11 @@ export function subscribeConnection(handler: (state: ConnState) => void): () => 
 
 export function setRoomHandler(handler: RoomHandler | null) {
   onRoomHandler = handler
+  getSocket()
+}
+
+export function setReactionHandler(handler: ReactionHandler | null) {
+  onReactionHandler = handler
   getSocket()
 }
 
@@ -225,6 +235,10 @@ export async function submitGuess(guess: string) {
 
 export async function submitVote(targetId: string) {
   return ack<OkMaybe>('submitVote', { targetId })
+}
+
+export async function sendReaction(emoji: string) {
+  return ack<OkMaybe>('sendReaction', { emoji })
 }
 
 export async function rematch() {

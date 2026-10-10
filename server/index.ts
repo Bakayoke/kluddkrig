@@ -72,7 +72,7 @@ app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
     name: 'kluddkrig',
-    version: '2026-10-10-role-clarity',
+    version: '2026-10-10-party-fun',
     rooms: allRooms().size,
     persist: persistDiagnostics(),
   })
@@ -312,6 +312,26 @@ io.on('connection', (socket) => {
     if ('error' in result) return ack?.({ ok: false, error: result.error })
     ack?.({ ok: true })
     broadcastRoom(result.code)
+  })
+
+  const REACTION_OK = new Set(['😂', '🔥', '😱', '👏', '💀', '👀'])
+  socket.on('sendReaction', ({ emoji }, ack) => {
+    const binding = getBinding(socket.id)
+    if (!binding) return ack?.({ ok: false, error: 'Inte ansluten' })
+    const room = getRoom(binding.code)
+    if (!room || room.status !== 'reveal') {
+      return ack?.({ ok: false, error: 'Inte reveal' })
+    }
+    const icon = String(emoji ?? '')
+    if (!REACTION_OK.has(icon)) return ack?.({ ok: false, error: 'Ogiltig reaktion' })
+    const player = room.players.find((p) => p.id === binding.playerId)
+    io.to(room.code).emit('reaction', {
+      id: crypto.randomUUID(),
+      emoji: icon,
+      name: player?.name ?? '?',
+      at: Date.now(),
+    })
+    ack?.({ ok: true })
   })
 
   socket.on('rematch', (_data, ack) => {

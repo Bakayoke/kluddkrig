@@ -44,6 +44,14 @@ export type Highlight = {
   roast: string
 }
 
+export type Award = {
+  id: string
+  playerId: string
+  name: string
+  title: string
+  blurb: string
+}
+
 export type PublicRound = {
   prompt: string | null
   mode: RoundMode
@@ -73,6 +81,8 @@ export type PublicRound = {
   revengeIds: string[]
   roast: string | null
   stealthBonusIds: string[]
+  isFinale: boolean
+  scoreMult: number
 }
 
 export type PublicRoom = {
@@ -92,11 +102,13 @@ export type PublicRoom = {
   youPlaying: boolean
   scores: { playerId: string; name: string; score: number }[]
   highlights: Highlight[]
+  awards: Award[]
   minPlayers: number
   playingCount: number
   drawSeconds: number
   sabotageSeconds: number
   yourStreak: number
+  canReact: boolean
 }
 
 export type Session = {
@@ -114,4 +126,12 @@ export type RoomPreview = {
   isPublic: boolean
 }
 
+export type ReactionEvent = {
+  id: string
+  emoji: string
+  name: string
+  at: number
+}
+
 export const NONE_GUESS = '__none__'
+export const REACTION_EMOJIS = ['😂', '🔥', '😱', '👏', '💀', '👀'] as const

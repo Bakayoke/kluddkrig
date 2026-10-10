@@ -8,10 +8,12 @@ import {
   loadSession,
   rematch,
   saveSession,
+  sendReaction,
   setGameOptions,
   setHostPlaying,
   setLanguage,
   setPublicLobby,
+  setReactionHandler,
   setRoomHandler,
   startGame,
   submitDrawing,
@@ -25,8 +27,8 @@ import { BeforeAfter } from './BeforeAfter'
 import { DoodleCanvas } from './DoodleCanvas'
 import { fmt, packLabel, t } from './i18n'
 import { JoinQr } from './qr'
-import type { Lang, PromptPack, PublicRoom, RoomPreview } from './types'
-import { NONE_GUESS } from './types'
+import type { Lang, PromptPack, PublicRoom, ReactionEvent, RoomPreview } from './types'
+import { NONE_GUESS, REACTION_EMOJIS } from './types'
 
 const KLOTTERKAOS_URL = 'https://klotterkaos.com'
 const FACTOPIA_URL = 'https://factopia.net'
@@ -338,6 +340,7 @@ function RoomView({
   const [tvMode, setTvMode] = useState(Boolean(startInTv))
   const [fsActive, setFsActive] = useState(() => isFullscreenActive())
   const [highlightIdx, setHighlightIdx] = useState(0)
+  const [floaties, setFloaties] = useState<(ReactionEvent & { x: number })[]>([])
   const countdown = useCountdown(room.phaseEndsAt)
   const joinUrl = `${window.location.origin}?join=${room.code}`
   const round = room.round
@@ -346,6 +349,17 @@ function RoomView({
     document.body.classList.toggle('tv-mode', tvMode)
     return () => document.body.classList.remove('tv-mode')
   }, [tvMode])
+
+  useEffect(() => {
+    setReactionHandler((reaction) => {
+      const x = 12 + Math.random() * 76
+      setFloaties((prev) => [...prev.slice(-18), { ...reaction, x }])
+      window.setTimeout(() => {
+        setFloaties((prev) => prev.filter((f) => f.id !== reaction.id))
+      }, 2600)
+    })
+    return () => setReactionHandler(null)
+  }, [])
 
   useEffect(() => {
     const onFs = () => setFsActive(isFullscreenActive())
@@ -534,6 +548,21 @@ function RoomView({
           {room.phaseEndsAt > 0 ? ` · ${countdown}s` : ''}
           {youPlaying && room.yourStreak >= 2 ? ` · ${fmt(ui.streakHint, { n: room.yourStreak })}` : ''}
         </p>
+      )}
+
+      {round?.isFinale && room.status !== 'lobby' && room.status !== 'results' && (
+        <p className="finale-banner">{ui.finaleBanner}</p>
+      )}
+
+      {floaties.length > 0 && (
+        <div className="reaction-layer" aria-hidden>
+          {floaties.map((f) => (
+            <span key={f.id} className="reaction-float" style={{ left: `${f.x}%` }}>
+              <span className="reaction-emoji">{f.emoji}</span>
+              <span className="reaction-name">{f.name}</span>
+            </span>
+          ))}
+        </div>
       )}
 
       {room.status === 'draw' && round && (
@@ -764,6 +793,23 @@ function RoomView({
             </div>
           )}
           {countdown > 0 && <p className="muted">{ui.nextRound}</p>}
+          {room.canReact && (
+            <div className="react-bar hide-on-tv">
+              <p className="muted">{ui.reactHint}</p>
+              <div className="react-row">
+                {REACTION_EMOJIS.map((emoji) => (
+                  <button
+                    key={emoji}
+                    type="button"
+                    className="react-btn"
+                    onClick={() => void sendReaction(emoji)}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
       )}
 
@@ -773,6 +819,20 @@ function RoomView({
             {ui.resultsTitle}
             {room.phaseEndsAt > 0 ? ` · ${countdown}s` : ''}
           </h2>
+          {room.awards.length > 0 && (
+            <div className="awards">
+              <h3>{ui.awardsTitle}</h3>
+              <ul className="award-list">
+                {room.awards.map((a) => (
+                  <li key={a.id}>
+                    <strong className="award-title">{a.title}</strong>
+                    <span className="award-name">{a.name}</span>
+                    <span className="muted">{a.blurb}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {highlight && (
             <div className="highlight-reel">
               <h3>{ui.highlights}</h3>

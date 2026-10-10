@@ -8,9 +8,11 @@ import {
   pickSabotageMission,
 } from './content.js'
 import type {
+  Award,
   Highlight,
   Lang,
   Player,
+  PlayerCareer,
   PlayerMission,
   PromptPack,
   PublicRoom,
@@ -89,7 +91,16 @@ function emptyRoomMeta() {
     promptPack: 'classic' as PromptPack,
     saboteurStreak: {} as Record<string, number>,
     highlights: [] as Highlight[],
+    career: {} as Record<string, PlayerCareer>,
+    awards: [] as Award[],
   }
+}
+
+function careerOf(room: Room, playerId: string): PlayerCareer {
+  if (!room.career[playerId]) {
+    room.career[playerId] = { spots: 0, votes: 0, stealth: 0, saboteurRounds: 0, revenge: 0 }
+  }
+  return room.career[playerId]!
 }
 
 export function allRooms() {
@@ -315,6 +326,8 @@ function beginDraw(room: Room) {
     room.phaseEndsAt = 0
     return
   }
+  const isFinale = room.roundIndex >= room.maxRounds
+  const scoreMult = isFinale ? 2 : 1
   const history = room.round?.usedPromptHistory ?? []
   const prompt = pickPrompt(room.language, history, room.promptPack ?? 'classic')
   room.round = {
@@ -329,9 +342,11 @@ function beginDraw(room: Room) {
     guesses: {},
     votes: {},
     usedPromptHistory: [...history, prompt].slice(-40),
+    isFinale,
+    scoreMult,
   }
   room.status = 'draw'
-  room.phaseEndsAt = Date.now() + DRAW_MS
+  room.phaseEndsAt = Date.now() + Math.round(DRAW_MS * (isFinale ? 0.7 : 1))
   touch(room)
 }
 
@@ -416,7 +431,8 @@ function beginSabotage(room: Room) {
   round.missions = missions
   round.finals = {}
   room.status = 'sabotage'
-  room.phaseEndsAt = Date.now() + SABOTAGE_MS
+  const isFinale = Boolean(round.isFinale)
+  room.phaseEndsAt = Date.now() + Math.round(SABOTAGE_MS * (isFinale ? 0.75 : 1))
   touch(room)
 }
 
@@ -458,7 +474,7 @@ function beginGuess(room: Room) {
   shuffle(order)
   round._suspectOrder = order
   room.status = 'guess'
-  room.phaseEndsAt = Date.now() + GUESS_MS
+  room.phaseEndsAt = Date.now() + Math.round(GUESS_MS * (round.isFinale ? 0.75 : 1))
   touch(room)
 }
 
@@ -470,7 +486,7 @@ function beginVote(room: Room) {
   }
   room.round.votes = {}
   room.status = 'vote'
-  room.phaseEndsAt = Date.now() + VOTE_MS
+  room.phaseEndsAt = Date.now() + Math.round(VOTE_MS * (room.round.isFinale ? 0.75 : 1))
   touch(room)
 }
 
@@ -480,6 +496,7 @@ function scoreRound(room: Room) {
   const players = playingPlayers(room)
   const sabotagedSet = new Set(round.sabotagedArtistIds)
   const saboteurSet = new Set(round.saboteurIds)
+  const mult = Math.max(1, round.scoreMult || 1)
 
   const correctIds: string[] = []
   for (const g of players) {
@@ -491,7 +508,8 @@ function scoreRound(room: Room) {
         : sabotagedSet.has(guess)
     if (ok) {
       correctIds.push(g.id)
-      g.score += 1
+      g.score += 1 * mult
+      careerOf(room, g.id).spots += 1
     }
   }
   const halfG = Math.ceil(players.length / 2)
@@ -509,13 +527,13 @@ function scoreRound(room: Room) {
       if (!vote) continue
       if (saboteurSet.has(vote)) {
         correctVoters.push(v.id)
-        v.score += 1
+        v.score += 1 * mult
         rightVotes += 1
+        careerOf(room, v.id).votes += 1
       } else {
         wrongVotes += 1
       }
 
-      // Artist's revenge: spot who sabotaged YOUR drawing
       const myEditor = Object.entries(round.editOf).find(([, artistId]) => artistId === v.id)?.[0]
       if (
         myEditor &&
@@ -524,7 +542,8 @@ function scoreRound(room: Room) {
         vote === myEditor
       ) {
         revengeIds.push(v.id)
-        v.score += 1
+        v.score += 1 * mult
+        careerOf(room, v.id).revenge += 1
       }
     }
   }
@@ -536,27 +555,133 @@ function scoreRound(room: Room) {
       : !majoritySpotted || wrongVotes > rightVotes
 
   for (const sid of round.saboteurIds) {
+    careerOf(room, sid).saboteurRounds += 1
     const saboteur = room.players.find((p) => p.id === sid)
     if (saboteur && stealthOk) {
-      saboteur.score += 3
+      saboteur.score += 3 * mult
       stealthBonusIds.push(sid)
       room.saboteurStreak[sid] = (room.saboteurStreak[sid] ?? 0) + 1
+      careerOf(room, sid).stealth += 1
     } else {
       room.saboteurStreak[sid] = 0
     }
   }
-  // Reset streak for non-saboteurs who failed previous? only saboteurs update.
 
   for (const artistId of round.sabotagedArtistIds) {
     const artist = room.players.find((p) => p.id === artistId)
-    if (artist && !majoritySpotted) artist.score += 2
+    if (artist && !majoritySpotted) artist.score += 2 * mult
   }
+
+  const sabName =
+    round.saboteurIds.length > 0
+      ? round.saboteurIds
+          .map((id) => room.players.find((p) => p.id === id)?.name ?? '?')
+          .join(' & ')
+      : null
 
   round._correctGuessers = correctIds
   round._correctVoters = correctVoters
   round._revengeIds = revengeIds
   round._stealthBonusIds = stealthBonusIds
-  round._roast = buildRoast(room.language, correctIds.length, players.length, round.mode)
+  round._roast = buildRoast(
+    room.language,
+    correctIds.length,
+    players.length,
+    round.mode,
+    sabName,
+  )
+}
+
+function computeAwards(room: Room): Award[] {
+  const lang = room.language
+  const playing = playingPlayers(room)
+  if (playing.length === 0) return []
+
+  const used = new Set<string>()
+  const awards: Award[] = []
+
+  const pick = (
+    id: string,
+    metric: (p: Player) => number,
+    titleSv: string,
+    titleEn: string,
+    blurbSv: string,
+    blurbEn: string,
+  ) => {
+    const ranked = [...playing]
+      .filter((p) => !used.has(p.id))
+      .map((p) => ({ p, v: metric(p) }))
+      .filter((x) => x.v > 0)
+      .sort((a, b) => b.v - a.v || a.p.name.localeCompare(b.p.name))
+    const top = ranked[0]
+    if (!top) return
+    used.add(top.p.id)
+    awards.push({
+      id,
+      playerId: top.p.id,
+      name: top.p.name,
+      title: lang === 'en' ? titleEn : titleSv,
+      blurb: lang === 'en' ? blurbEn.replace('{n}', String(top.v)) : blurbSv.replace('{n}', String(top.v)),
+    })
+  }
+
+  const champ = [...playing].sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))[0]
+  if (champ) {
+    used.add(champ.id)
+    awards.push({
+      id: 'champion',
+      playerId: champ.id,
+      name: champ.name,
+      title: lang === 'en' ? 'Champion' : 'Mästaren',
+      blurb:
+        lang === 'en'
+          ? `${champ.score} points — ruled the night`
+          : `${champ.score} poäng — kvällens kung`,
+    })
+  }
+
+  pick(
+    'ghost',
+    (p) => careerOf(room, p.id).stealth,
+    'Spöket',
+    'The Ghost',
+    '{n} stealth-wins — invisible',
+    '{n} stealth wins — invisible',
+  )
+  pick(
+    'detective',
+    (p) => careerOf(room, p.id).spots,
+    'Detektiven',
+    'Detective',
+    '{n} rätt saboterade bilder',
+    '{n} sabotaged drawings spotted',
+  )
+  pick(
+    'hunter',
+    (p) => careerOf(room, p.id).votes,
+    'Jägaren',
+    'Hunter',
+    '{n} rätt sabotör-röster',
+    '{n} correct saboteur votes',
+  )
+  pick(
+    'revenge',
+    (p) => careerOf(room, p.id).revenge,
+    'Hämnaren',
+    'Vigilante',
+    '{n} hämndträffar',
+    '{n} revenge hits',
+  )
+  pick(
+    'chaos',
+    (p) => careerOf(room, p.id).saboteurRounds,
+    'Kaoskungen',
+    'Chaos Agent',
+    'Sabotör {n} gånger',
+    'Saboteur {n} times',
+  )
+
+  return awards
 }
 
 function pushHighlight(room: Room) {
@@ -593,12 +718,13 @@ function beginReveal(room: Room) {
   scoreRound(room)
   pushHighlight(room)
   room.status = 'reveal'
-  room.phaseEndsAt = Date.now() + REVEAL_MS
+  room.phaseEndsAt = Date.now() + Math.round(REVEAL_MS * (room.round?.isFinale ? 1.15 : 1))
   touch(room)
 }
 
 function advanceAfterReveal(room: Room) {
   if (room.roundIndex >= room.maxRounds) {
+    room.awards = computeAwards(room)
     room.status = 'results'
     room.phaseEndsAt = Date.now() + RESULTS_MS
     touch(room)
@@ -628,6 +754,8 @@ export function startGame(code: string, playerId: string) {
     room.roundIndex = 0
     room.saboteurStreak = {}
     room.highlights = []
+    room.career = {}
+    room.awards = []
   }
   room.round = null
   beginDraw(room)
@@ -760,6 +888,8 @@ export function rematch(code: string, playerId: string) {
   room.round = null
   room.saboteurStreak = {}
   room.highlights = []
+  room.career = {}
+  room.awards = []
   for (const p of room.players) p.score = 0
   touch(room)
   return room
@@ -779,13 +909,22 @@ export function pruneIdleRooms() {
 export function hydrateRooms(list: Room[]) {
   rooms.clear()
   for (const room of list) {
+    const round = room.round
+      ? {
+          ...room.round,
+          isFinale: Boolean(room.round.isFinale),
+          scoreMult: room.round.scoreMult || 1,
+        }
+      : null
     rooms.set(room.code, {
       ...room,
       promptPack: room.promptPack ?? 'classic',
       saboteurStreak: room.saboteurStreak ?? {},
       highlights: room.highlights ?? [],
+      career: room.career ?? {},
+      awards: room.awards ?? [],
       players: room.players.map((p) => ({ ...p, connected: false })),
-      round: room.round,
+      round,
     })
   }
 }
@@ -904,12 +1043,15 @@ function toPublicRound(room: Room, viewerId: string): PublicRound | null {
     revengeIds: reveal ? round._revengeIds ?? [] : [],
     roast: reveal ? round._roast ?? null : null,
     stealthBonusIds: reveal ? round._stealthBonusIds ?? [] : [],
+    isFinale: Boolean(round.isFinale),
+    scoreMult: round.scoreMult || 1,
   }
 }
 
 export function toPublicRoom(room: Room, viewerId: string): PublicRoom {
   const you = room.players.find((p) => p.id === viewerId)
   const playing = playingPlayers(room)
+  const finale = Boolean(room.round?.isFinale)
   return {
     code: room.code,
     hostId: room.hostId,
@@ -936,11 +1078,13 @@ export function toPublicRoom(room: Room, viewerId: string): PublicRoom {
       .map((p) => ({ playerId: p.id, name: p.name, score: p.score }))
       .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name)),
     highlights: room.status === 'results' ? room.highlights ?? [] : [],
+    awards: room.status === 'results' ? room.awards ?? [] : [],
     minPlayers: MIN_PLAYERS,
     playingCount: playing.length,
-    drawSeconds: Math.round(DRAW_MS / 1000),
-    sabotageSeconds: Math.round(SABOTAGE_MS / 1000),
+    drawSeconds: Math.round((DRAW_MS * (finale ? 0.7 : 1)) / 1000),
+    sabotageSeconds: Math.round((SABOTAGE_MS * (finale ? 0.75 : 1)) / 1000),
     yourStreak: room.saboteurStreak[viewerId] ?? 0,
+    canReact: room.status === 'reveal',
   }
 }
 

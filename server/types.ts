@@ -39,6 +39,22 @@ export type Highlight = {
   roast: string
 }
 
+export type PlayerCareer = {
+  spots: number
+  votes: number
+  stealth: number
+  saboteurRounds: number
+  revenge: number
+}
+
+export type Award = {
+  id: string
+  playerId: string
+  name: string
+  title: string
+  blurb: string
+}
+
 export type RoundState = {
   prompt: string
   drawings: Record<string, string>
@@ -53,6 +69,8 @@ export type RoundState = {
   guesses: Record<string, string>
   votes: Record<string, string>
   usedPromptHistory: string[]
+  isFinale: boolean
+  scoreMult: number
 }
 
 export type Room = {
@@ -71,6 +89,8 @@ export type Room = {
   /** Consecutive stealth successes per player */
   saboteurStreak: Record<string, number>
   highlights: Highlight[]
+  career: Record<string, PlayerCareer>
+  awards: Award[]
   updatedAt: number
 }
 
@@ -126,6 +146,8 @@ export type PublicRound = {
   revengeIds: string[]
   roast: string | null
   stealthBonusIds: string[]
+  isFinale: boolean
+  scoreMult: number
 }
 
 export type PublicRoom = {
@@ -145,9 +167,11 @@ export type PublicRoom = {
   youPlaying: boolean
   scores: { playerId: string; name: string; score: number }[]
   highlights: Highlight[]
+  awards: Award[]
   minPlayers: number
   playingCount: number
   drawSeconds: number
   sabotageSeconds: number
   yourStreak: number
+  canReact: boolean
 }

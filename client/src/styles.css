@@ -1437,9 +1437,117 @@ body.tv-mode .stage-lead {
   gap: 0.5rem;
   margin-top: 1rem;
 }
+.finale-banner {
+  font-family: var(--font-display);
+  font-weight: 800;
+  text-align: center;
+  margin: 0 0 0.75rem;
+  padding: 0.55rem 0.85rem;
+  background: var(--yellow);
+  border: 3px solid var(--ink);
+  border-radius: 12px;
+  box-shadow: 3px 3px 0 var(--ink);
+  animation: roast-in 0.35s ease-out;
+}
+.awards {
+  margin-bottom: 1.25rem;
+}
+.award-list {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0;
+  display: grid;
+  gap: 0.55rem;
+}
+.award-list li {
+  display: grid;
+  gap: 0.1rem;
+  padding: 0.7rem 0.85rem;
+  background: var(--paper);
+  border: 3px solid var(--ink);
+  border-radius: 12px;
+  box-shadow: 3px 3px 0 var(--ink);
+}
+.award-title {
+  font-family: var(--font-display);
+  font-size: 1.15rem;
+}
+.award-name {
+  font-weight: 800;
+}
+.react-bar {
+  margin-top: 1rem;
+  text-align: center;
+}
+.react-row {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.45rem;
+  margin-top: 0.35rem;
+}
+.react-btn {
+  font-size: 1.55rem;
+  line-height: 1;
+  width: 3rem;
+  height: 3rem;
+  border: 3px solid var(--ink);
+  border-radius: 12px;
+  background: var(--paper);
+  box-shadow: 2px 2px 0 var(--ink);
+  cursor: pointer;
+}
+.react-btn:active {
+  transform: translate(1px, 1px);
+  box-shadow: 1px 1px 0 var(--ink);
+}
+.reaction-layer {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  overflow: hidden;
+}
+.reaction-float {
+  position: absolute;
+  bottom: 12%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  animation: float-up 2.5s ease-out forwards;
+}
+.reaction-emoji {
+  font-size: clamp(2rem, 6vw, 3.2rem);
+  filter: drop-shadow(2px 2px 0 rgba(0, 0, 0, 0.25));
+}
+.reaction-name {
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: var(--ink);
+  color: var(--paper);
+  padding: 0.15rem 0.4rem;
+  border-radius: 6px;
+  margin-top: 0.15rem;
+}
+@keyframes float-up {
+  0% {
+    opacity: 0;
+    transform: translateY(20px) scale(0.8);
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-45vh) scale(1.1);
+  }
+}
 body.tv-mode .ba-stage {
   width: min(100%, 560px);
 }
 body.tv-mode .roast-line {
   font-size: clamp(1.5rem, 4vw, 2.2rem);
+}
+body.tv-mode .finale-banner {
+  font-size: clamp(1.3rem, 3.5vw, 2rem);
 }

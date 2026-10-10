@@ -282,7 +282,14 @@ export function pickBluffMission(excludeIds: string[] = []) {
   return list[Math.floor(Math.random() * list.length)]!
 }
 
-export function buildRoast(lang: Lang, spotted: number, total: number, mode: string): string {
+export function buildRoast(
+  lang: Lang,
+  spotted: number,
+  total: number,
+  mode: string,
+  saboteurName?: string | null,
+): string {
+  const who = saboteurName?.trim() || (lang === 'en' ? 'The saboteur' : 'Sabotören')
   if (mode === 'doubleBluff') {
     return lang === 'en'
       ? 'Plot twist — nobody sabotaged. You all got bluffed.'
@@ -294,25 +301,25 @@ export function buildRoast(lang: Lang, spotted: number, total: number, mode: str
   const ratio = spotted / total
   if (spotted === 0) {
     return lang === 'en'
-      ? 'Perfect crime. Nobody spotted it.'
-      : 'Perfekt brott. Ingen såg det.'
+      ? `${who} got away with it. Perfect crime.`
+      : `${who} klarade sig. Perfekt brott.`
   }
   if (ratio < 0.35) {
     return lang === 'en'
-      ? `Only ${spotted}/${total} spotted it — sneaky.`
-      : `Bara ${spotted}/${total} såg det — smygigt.`
+      ? `Only ${spotted}/${total} spotted ${who}. Sneaky.`
+      : `Bara ${spotted}/${total} såg ${who}. Smygigt.`
   }
   if (ratio < 0.6) {
     return lang === 'en'
-      ? `${spotted}/${total} caught it. Mid sabotage.`
-      : `${spotted}/${total} såg det. Medel-sabotage.`
+      ? `${spotted}/${total} caught ${who}. Mid sabotage.`
+      : `${spotted}/${total} såg ${who}. Medel-sabotage.`
   }
   if (spotted === total) {
     return lang === 'en'
-      ? 'Everyone saw it. Absolute flop.'
-      : 'Alla såg det. Total flop.'
+      ? `Everyone saw through ${who}. Absolute flop.`
+      : `Alla genomskådade ${who}. Total flop.`
   }
   return lang === 'en'
-    ? `${spotted}/${total} saw through it — loud sabotage.`
-    : `${spotted}/${total} genomskådade det — högljutt sabotage.`
+    ? `${spotted}/${total} saw through ${who} — loud sabotage.`
+    : `${spotted}/${total} genomskådade ${who} — högljutt sabotage.`
 }

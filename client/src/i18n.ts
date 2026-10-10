@@ -93,6 +93,9 @@ const sv = {
   difficultyStealth: 'Stealth',
   streakHint: 'Stealth-streak: {n}',
   dragCompare: 'Dra för att jämföra',
+  finaleBanner: 'FINAL — dubbla poäng!',
+  awardsTitle: 'Kvällens titlar',
+  reactHint: 'Reagera!',
 }
 
 const en: typeof sv = {
@@ -188,6 +191,9 @@ const en: typeof sv = {
   difficultyStealth: 'Stealth',
   streakHint: 'Stealth streak: {n}',
   dragCompare: 'Drag to compare',
+  finaleBanner: 'FINALE — double points!',
+  awardsTitle: 'Tonight’s titles',
+  reactHint: 'React!',
 }
 
 export type UiCopy = typeof sv
