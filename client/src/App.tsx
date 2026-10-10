@@ -581,7 +581,7 @@ function RoomView({
               <p className="prompt-card">
                 {ui.yourWord}: <strong>{round.prompt}</strong>
               </p>
-              <p className="muted">{fmt(ui.drawHint, { n: countdown || room.drawSeconds })}</p>
+              <p className="muted">{ui.drawHint}</p>
               <DoodleCanvas
                 submitLabel={ui.drawDone}
                 onSubmit={(url) => void submitDrawing(url)}

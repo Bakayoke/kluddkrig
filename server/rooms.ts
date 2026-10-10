@@ -28,11 +28,12 @@ const makeCode = customAlphabet('ABCDEFGHJKLMNPQRSTUVWXYZ', 4)
 
 export const MIN_PLAYERS = 3
 export const MAX_PLAYERS = 8
-export const DEFAULT_MAX_ROUNDS = 3
+export const DEFAULT_MAX_ROUNDS = 5
 export const DRAW_MS = 45_000
 export const SABOTAGE_MS = 25_000
 export const GUESS_MS = 20_000
 export const VOTE_MS = 18_000
+/** Reveal/results still auto-advance so the show keeps moving */
 export const REVEAL_MS = 16_000
 export const RESULTS_MS = 45_000
 export const NONE_GUESS = '__none__'
@@ -346,7 +347,7 @@ function beginDraw(room: Room) {
     scoreMult,
   }
   room.status = 'draw'
-  room.phaseEndsAt = Date.now() + Math.round(DRAW_MS * (isFinale ? 0.7 : 1))
+  room.phaseEndsAt = 0
   touch(room)
 }
 
@@ -431,8 +432,7 @@ function beginSabotage(room: Room) {
   round.missions = missions
   round.finals = {}
   room.status = 'sabotage'
-  const isFinale = Boolean(round.isFinale)
-  room.phaseEndsAt = Date.now() + Math.round(SABOTAGE_MS * (isFinale ? 0.75 : 1))
+  room.phaseEndsAt = 0
   touch(room)
 }
 
@@ -474,7 +474,7 @@ function beginGuess(room: Room) {
   shuffle(order)
   round._suspectOrder = order
   room.status = 'guess'
-  room.phaseEndsAt = Date.now() + Math.round(GUESS_MS * (round.isFinale ? 0.75 : 1))
+  room.phaseEndsAt = 0
   touch(room)
 }
 
@@ -486,7 +486,7 @@ function beginVote(room: Room) {
   }
   room.round.votes = {}
   room.status = 'vote'
-  room.phaseEndsAt = Date.now() + Math.round(VOTE_MS * (room.round.isFinale ? 0.75 : 1))
+  room.phaseEndsAt = 0
   touch(room)
 }
 
@@ -832,29 +832,7 @@ export function submitVote(code: string, playerId: string, targetId: string) {
 }
 
 export function onPhaseTimeout(room: Room) {
-  if (room.status === 'draw') {
-    const round = room.round
-    if (!round) return
-    const drawn = Object.keys(round.drawings).length
-    if (drawn < 2) {
-      advanceAfterReveal(room)
-      return
-    }
-    beginSabotage(room)
-    return
-  }
-  if (room.status === 'sabotage') {
-    beginGuess(room)
-    return
-  }
-  if (room.status === 'guess') {
-    beginVote(room)
-    return
-  }
-  if (room.status === 'vote') {
-    beginReveal(room)
-    return
-  }
+  // Interactive phases wait for everyone to submit — only show phases auto-advance.
   if (room.status === 'reveal') {
     advanceAfterReveal(room)
     return

@@ -72,7 +72,7 @@ app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
     name: 'kluddkrig',
-    version: '2026-10-10-party-fun',
+    version: '2026-10-10-no-timer',
     rooms: allRooms().size,
     persist: persistDiagnostics(),
   })
