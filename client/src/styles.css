@@ -426,6 +426,56 @@ body.pad-mode .brand-sm {
   font-weight: 800;
   opacity: 0.8;
 }
+.tip-fika {
+  margin: 1.25rem 0 0.25rem;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.45rem;
+}
+.tip-fika.compact {
+  margin-top: 1.5rem;
+}
+.tip-fika-link {
+  color: var(--ink);
+  text-decoration: none;
+  padding: 0.65rem 0.85rem;
+  border-radius: 10px;
+  background: var(--yellow);
+  border: 2px solid var(--ink);
+  box-shadow: 3px 3px 0 var(--ink);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-weight: 800;
+}
+.tip-fika-link:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 4px 4px 0 var(--ink);
+}
+.tip-fika-hint {
+  font-size: 0.8rem;
+  font-weight: 700;
+  opacity: 0.75;
+}
+.tip-fika-copy {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  opacity: 0.7;
+  cursor: pointer;
+  text-align: left;
+  padding: 0.15rem 0.25rem;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.tip-fika-copy:hover {
+  opacity: 1;
+}
 .sister-games {
   display: flex;
   flex-wrap: wrap;

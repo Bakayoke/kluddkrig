@@ -39,6 +39,47 @@ const YOURTASKIS_URL = 'https://yourtaskis.com'
 const SCOURGEBORN_URL = 'https://scourgeborn.com'
 const PULSEKAOS_URL = 'https://pulsekaos.com'
 
+/** Personal Swish — opens the Swish app with a prefilled tip. */
+const SWISH_PAYEE = '46730457930'
+const SWISH_DISPLAY = '073-045 79 30'
+
+function swishFikaUrl(amountSek = 40) {
+  const params = new URLSearchParams({
+    sw: SWISH_PAYEE,
+    amt: amountSek.toFixed(1),
+    msg: 'Kluddkrig fika',
+    edit: 'amt,msg',
+  })
+  return `https://app.swish.nu/1/p/sw/?${params.toString()}`
+}
+
+function TipFika({ lang, compact }: { lang: Lang; compact?: boolean }) {
+  const ui = t(lang)
+  const [copied, setCopied] = useState(false)
+
+  async function copyNumber() {
+    try {
+      await navigator.clipboard.writeText(`+${SWISH_PAYEE}`)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2000)
+    } catch {
+      /* ignore */
+    }
+  }
+
+  return (
+    <div className={`tip-fika${compact ? ' compact' : ''}`}>
+      <a className="tip-fika-link" href={swishFikaUrl(40)} target="_blank" rel="noreferrer">
+        <strong>{ui.tipFika}</strong>
+        <span className="tip-fika-hint">{ui.tipFikaHint}</span>
+      </a>
+      <button type="button" className="tip-fika-copy" onClick={() => void copyNumber()}>
+        {copied ? ui.tipCopied : `${ui.tipCopy} · ${SWISH_DISPLAY}`}
+      </button>
+    </div>
+  )
+}
+
 function SisterGames({ compact, hubHint }: { compact?: boolean; hubHint: string }) {
   return (
     <div className={`sister-games${compact ? ' compact' : ''}`}>
@@ -161,6 +202,8 @@ function Home({
           <li>{ui.how4}</li>
         </ol>
       </section>
+
+      <TipFika lang={lang} />
 
       <p className="sister-label">{ui.sister}</p>
       <SisterGames hubHint={ui.sisterHub} />
@@ -865,6 +908,7 @@ function RoomView({
               </button>
             </div>
           )}
+          {!tvMode && <TipFika lang={room.language} compact />}
         </section>
       )}
 
