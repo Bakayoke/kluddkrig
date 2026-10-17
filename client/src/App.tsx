@@ -5,6 +5,7 @@ import {
   ensureSessionBound,
   fetchRoomPreview,
   joinGame,
+  leaveGame,
   loadSession,
   rematch,
   saveSession,
@@ -420,8 +421,7 @@ function RoomView({
             type="button"
             className="chip hide-on-tv"
             onClick={() => {
-              clearSession()
-              onLeave()
+              void leaveGame().finally(() => onLeave())
             }}
           >
             {ui.leave}
@@ -908,7 +908,7 @@ export default function App() {
       joinParam && /^[A-Z]{4}$/i.test(joinParam) ? joinParam.toUpperCase() : null
 
     if (joinCodeFromUrl) {
-      clearSession()
+      void leaveGame()
       setJoinCode(joinCodeFromUrl)
       setScreen('join')
       window.history.replaceState({}, '', '/')
@@ -1020,7 +1020,6 @@ export default function App() {
           playerId={playerId}
           startInTv={startInTv}
           onLeave={() => {
-            clearSession()
             setRoom(null)
             setPlayerId(null)
             setScreen('home')

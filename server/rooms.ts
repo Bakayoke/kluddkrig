@@ -224,23 +224,19 @@ export function reconnectSocket(code: string, playerId: string, socketId: string
   if (!room) return { error: 'Rummet finns inte', code: 'NOT_FOUND' as const }
   const player = room.players.find((p) => p.id === playerId)
   if (!player) return { error: 'Spelaren finns inte', code: 'NO_PLAYER' as const }
+
+  // Never steal a socket that already belongs to another room/player
+  // (stale in-flight rejoin after create/join).
+  const prev = socketToPlayer.get(socketId)
+  if (prev && (prev.code !== room.code || prev.playerId !== playerId)) {
+    return { error: 'Redan i annat rum', code: 'BUSY' as const }
+  }
+
   cancelDisconnectTimer(room.code, playerId)
   // Drop stale bindings for this player (old socket ids), keep this socket.
   for (const [sid, b] of socketToPlayer) {
     if (sid !== socketId && b.code === room.code && b.playerId === playerId) {
       socketToPlayer.delete(sid)
-    }
-  }
-  // If this socket was bound elsewhere, release that without nuking this rejoin.
-  const prev = socketToPlayer.get(socketId)
-  if (prev && (prev.code !== room.code || prev.playerId !== playerId)) {
-    socketToPlayer.delete(socketId)
-    const prevRoom = getRoom(prev.code)
-    if (prevRoom && !hasLiveBinding(prev.code, prev.playerId) && !inDisconnectGrace(prev.code, prev.playerId)) {
-      const prevPlayer = prevRoom.players.find((p) => p.id === prev.playerId)
-      if (prevPlayer) prevPlayer.connected = false
-      touch(prevRoom)
-      onRoomDirty?.(prev.code)
     }
   }
   player.connected = true

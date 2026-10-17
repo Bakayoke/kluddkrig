@@ -121,6 +121,17 @@ function ack<T>(event: string, payload: unknown) {
 
 const FATAL_REJOIN = new Set(['NOT_FOUND', 'NO_PLAYER'])
 
+/** Wait out any in-flight rejoin so it cannot race create/join on the server. */
+async function settlePendingRejoin() {
+  const pending = rejoinInFlight
+  if (!pending) return
+  try {
+    await pending
+  } catch {
+    /* ignore */
+  }
+}
+
 export async function ensureSessionBound(
   retries = 5,
 ): Promise<{ ok: boolean; playerId?: string; room?: PublicRoom; error?: string; code?: string } | null> {
@@ -174,6 +185,8 @@ export async function ensureSessionBound(
           clearSession()
           return last
         }
+        // BUSY = this socket is already bound elsewhere; stop retrying.
+        if (last.code === 'BUSY') return last
       } catch {
         last = { ok: false, error: 'reconnect failed' }
       }
@@ -189,6 +202,15 @@ export async function ensureSessionBound(
   }
 }
 
+export async function leaveGame() {
+  try {
+    await ack<OkMaybe>('leave', {})
+  } catch {
+    /* offline — still clear local session */
+  }
+  clearSession()
+}
+
 export async function createGame(
   name: string,
   language: Lang,
@@ -196,6 +218,7 @@ export async function createGame(
   hostPlays: boolean,
 ) {
   clearSession()
+  await settlePendingRejoin()
   const res = await ack<OkMaybe & { playerId: string; room: PublicRoom }>('create', {
     name,
     language,
@@ -211,6 +234,7 @@ export async function createGame(
 
 export async function joinGame(code: string, name: string) {
   clearSession()
+  await settlePendingRejoin()
   const res = await ack<OkMaybe & { playerId: string; room: PublicRoom }>('join', { code, name })
   if (res.ok && res.room && res.playerId) {
     activeRoomCode = res.room.code
@@ -302,6 +326,5 @@ export function saveSession(session: Session) {
 export function clearSession() {
   sessionEpoch += 1
   activeRoomCode = null
-  rejoinInFlight = null
   localStorage.removeItem(SESSION_KEY)
 }

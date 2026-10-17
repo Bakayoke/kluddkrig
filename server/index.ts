@@ -17,6 +17,7 @@ import {
   onPhaseTimeout,
   pruneIdleRooms,
   reconnectSocket,
+  releaseSocket,
   rematch,
   roomsNeedingTick,
   setGameOptions,
@@ -74,7 +75,7 @@ app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
     name: 'kluddkrig',
-    version: '2026-10-17-session-stable',
+    version: '2026-10-17-session-leave',
     rooms: allRooms().size,
     persist: persistDiagnostics(),
   })
@@ -236,6 +237,19 @@ io.on('connection', (socket) => {
       broadcastRoom(result.code)
     } catch {
       ack?.({ ok: false, error: 'Kunde inte återansluta' })
+    }
+  })
+
+  socket.on('leave', (_data, ack) => {
+    try {
+      const prev = getBinding(socket.id)
+      leaveAllGameRooms(socket)
+      const code = releaseSocket(socket.id)
+      if (code) broadcastRoom(code)
+      else if (prev?.code) broadcastRoom(prev.code)
+      ack?.({ ok: true })
+    } catch {
+      ack?.({ ok: false, error: 'Kunde inte lämna' })
     }
   })
 
