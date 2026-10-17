@@ -38,7 +38,7 @@ export const REVEAL_MS = 16_000
 export const RESULTS_MS = 45_000
 export const NONE_GUESS = '__none__'
 
-const DISCONNECT_GRACE_MS = 60_000
+const DISCONNECT_GRACE_MS = 3 * 60_000
 const ROOM_IDLE_MS = 12 * 60 * 60 * 1000
 const MAX_IMAGE_CHARS = 900_000
 
@@ -47,9 +47,14 @@ const socketToPlayer = new Map<string, { code: string; playerId: string }>()
 const disconnectTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 let onPersist: (() => void) | null = null
+let onRoomDirty: ((code: string) => void) | null = null
 
 export function setPersistHook(fn: (() => void) | null) {
   onPersist = fn
+}
+
+export function setRoomDirtyHook(fn: ((code: string) => void) | null) {
+  onRoomDirty = fn
 }
 
 function touch(room?: Room) {
@@ -68,6 +73,22 @@ function cancelDisconnectTimer(code: string, playerId: string) {
     clearTimeout(t)
     disconnectTimers.delete(key)
   }
+}
+
+function hasLiveBinding(code: string, playerId: string) {
+  for (const b of socketToPlayer.values()) {
+    if (b.code === code && b.playerId === playerId) return true
+  }
+  return false
+}
+
+function inDisconnectGrace(code: string, playerId: string) {
+  return disconnectTimers.has(playerKey(code, playerId))
+}
+
+/** Online for UI / startGame: live socket or still within reconnect grace. */
+export function isEffectivelyConnected(code: string, playerId: string) {
+  return hasLiveBinding(code, playerId) || inDisconnectGrace(code, playerId)
 }
 
 function uniqueCode(): string {
@@ -116,21 +137,24 @@ export function getBinding(socketId: string) {
   return socketToPlayer.get(socketId)
 }
 
+export function listSocketBindings() {
+  return [...socketToPlayer.entries()]
+}
+
 /** Drop prior socket→player binding (e.g. creating/joining a new room). */
 export function releaseSocket(socketId: string): string | null {
   const prev = socketToPlayer.get(socketId)
   if (!prev) return null
   socketToPlayer.delete(socketId)
+  cancelDisconnectTimer(prev.code, prev.playerId)
   const room = getRoom(prev.code)
   if (room) {
     const player = room.players.find((p) => p.id === prev.playerId)
-    if (player) {
-      const stillBound = [...socketToPlayer.values()].some(
-        (b) => b.code === prev.code && b.playerId === prev.playerId,
-      )
-      if (!stillBound) player.connected = false
+    if (player && !hasLiveBinding(prev.code, prev.playerId)) {
+      player.connected = false
+      touch(room)
+      onRoomDirty?.(prev.code)
     }
-    touch(room)
   }
   return prev.code
 }
@@ -201,8 +225,23 @@ export function reconnectSocket(code: string, playerId: string, socketId: string
   const player = room.players.find((p) => p.id === playerId)
   if (!player) return { error: 'Spelaren finns inte', code: 'NO_PLAYER' as const }
   cancelDisconnectTimer(room.code, playerId)
+  // Drop stale bindings for this player (old socket ids), keep this socket.
   for (const [sid, b] of socketToPlayer) {
-    if (b.code === room.code && b.playerId === playerId) socketToPlayer.delete(sid)
+    if (sid !== socketId && b.code === room.code && b.playerId === playerId) {
+      socketToPlayer.delete(sid)
+    }
+  }
+  // If this socket was bound elsewhere, release that without nuking this rejoin.
+  const prev = socketToPlayer.get(socketId)
+  if (prev && (prev.code !== room.code || prev.playerId !== playerId)) {
+    socketToPlayer.delete(socketId)
+    const prevRoom = getRoom(prev.code)
+    if (prevRoom && !hasLiveBinding(prev.code, prev.playerId) && !inDisconnectGrace(prev.code, prev.playerId)) {
+      const prevPlayer = prevRoom.players.find((p) => p.id === prev.playerId)
+      if (prevPlayer) prevPlayer.connected = false
+      touch(prevRoom)
+      onRoomDirty?.(prev.code)
+    }
   }
   player.connected = true
   socketToPlayer.set(socketId, { code: room.code, playerId })
@@ -218,7 +257,14 @@ export function disconnectSocket(socketId: string) {
   if (!room) return null
   const player = room.players.find((p) => p.id === binding.playerId)
   if (!player) return room
-  player.connected = false
+
+  // Another tab/socket still live — stay online, no grace needed.
+  if (hasLiveBinding(binding.code, binding.playerId)) {
+    touch(room)
+    return room
+  }
+
+  // Still show as online during grace — phones often blip for a few seconds.
   cancelDisconnectTimer(room.code, binding.playerId)
   const key = playerKey(room.code, binding.playerId)
   disconnectTimers.set(
@@ -227,13 +273,11 @@ export function disconnectSocket(socketId: string) {
       disconnectTimers.delete(key)
       const r = getRoom(binding.code)
       if (!r) return
-      const still = [...socketToPlayer.values()].some(
-        (b) => b.code === binding.code && b.playerId === binding.playerId,
-      )
-      if (still) return
+      if (hasLiveBinding(binding.code, binding.playerId)) return
       const p = r.players.find((x) => x.id === binding.playerId)
       if (p) p.connected = false
       touch(r)
+      onRoomDirty?.(binding.code)
     }, DISCONNECT_GRACE_MS),
   )
   touch(room)
@@ -726,7 +770,8 @@ function advanceAfterReveal(room: Room) {
   if (room.roundIndex >= room.maxRounds) {
     room.awards = computeAwards(room)
     room.status = 'results'
-    room.phaseEndsAt = Date.now() + RESULTS_MS
+    // Stay on results until host starts again / goes to lobby — don't auto-kick.
+    room.phaseEndsAt = 0
     touch(room)
     return
   }
@@ -740,13 +785,13 @@ export function startGame(code: string, playerId: string) {
   if (room.status !== 'lobby' && room.status !== 'results') {
     return { error: 'Spelet körs redan' }
   }
-  const count = playingPlayers(room).filter((p) => p.connected).length
+  const count = playingPlayers(room).filter((p) => isEffectivelyConnected(room.code, p.id)).length
   if (count < MIN_PLAYERS) {
     return {
       error:
         room.language === 'en'
-          ? `Need at least ${MIN_PLAYERS} players`
-          : `Behöver minst ${MIN_PLAYERS} spelare`,
+          ? `Need at least ${MIN_PLAYERS} connected players`
+          : `Behöver minst ${MIN_PLAYERS} anslutna spelare`,
     }
   }
   if (room.status === 'results') {
@@ -832,16 +877,9 @@ export function submitVote(code: string, playerId: string, targetId: string) {
 }
 
 export function onPhaseTimeout(room: Room) {
-  // Interactive phases wait for everyone to submit — only show phases auto-advance.
+  // Interactive phases wait for everyone to submit — only reveal auto-advances.
   if (room.status === 'reveal') {
     advanceAfterReveal(room)
-    return
-  }
-  if (room.status === 'results') {
-    room.status = 'lobby'
-    room.phaseEndsAt = 0
-    room.round = null
-    touch(room)
   }
 }
 
@@ -1038,7 +1076,7 @@ export function toPublicRoom(room: Room, viewerId: string): PublicRoom {
       id: p.id,
       name: p.name,
       score: p.score,
-      connected: p.connected,
+      connected: isEffectivelyConnected(room.code, p.id),
       playing: p.playing,
     })),
     language: room.language,

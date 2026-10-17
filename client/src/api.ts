@@ -28,9 +28,9 @@ export function getSocket() {
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: Infinity,
-      reconnectionDelay: 800,
-      reconnectionDelayMax: 5000,
-      timeout: 20_000,
+      reconnectionDelay: 500,
+      reconnectionDelayMax: 8_000,
+      timeout: 25_000,
     })
   }
 
@@ -112,16 +112,18 @@ function ack<T>(event: string, payload: unknown) {
     if (!s.connected) {
       s.connect()
     }
-    s.timeout(12_000).emit(event, payload, (err: Error | null, res: T) => {
+    s.timeout(18_000).emit(event, payload, (err: Error | null, res: T) => {
       if (err) reject(err)
       else resolve(res)
     })
   })
 }
 
+const FATAL_REJOIN = new Set(['NOT_FOUND', 'NO_PLAYER'])
+
 export async function ensureSessionBound(
-  retries = 4,
-): Promise<{ ok: boolean; playerId?: string; room?: PublicRoom; error?: string } | null> {
+  retries = 5,
+): Promise<{ ok: boolean; playerId?: string; room?: PublicRoom; error?: string; code?: string } | null> {
   const session = loadSession()
   if (!session) return null
   if (rejoinInFlight) return rejoinInFlight
@@ -130,7 +132,7 @@ export async function ensureSessionBound(
   const wanted = `${session.code}:${session.playerId}`
 
   rejoinInFlight = (async () => {
-    let last: { ok: boolean; playerId?: string; room?: PublicRoom; error?: string } = {
+    let last: { ok: boolean; playerId?: string; room?: PublicRoom; error?: string; code?: string } = {
       ok: false,
       error: 'offline',
     }
@@ -145,21 +147,37 @@ export async function ensureSessionBound(
         if (!s.connected) {
           await new Promise<void>((resolve) => {
             if (s.connected) return resolve()
-            s.once('connect', () => resolve())
-            setTimeout(() => resolve(), 3000)
+            const done = () => resolve()
+            s.once('connect', done)
+            setTimeout(() => {
+              s.off('connect', done)
+              resolve()
+            }, 5_000)
           })
         }
+        if (!s.connected) {
+          last = { ok: false, error: 'offline' }
+          await new Promise((r) => setTimeout(r, 700 * (i + 1)))
+          continue
+        }
         if (sessionEpoch !== epochAtStart) return { ok: false, error: 'session replaced' }
-        last = await ack<OkMaybe>('rejoin', { code: session.code, playerId: session.playerId })
+        last = await ack<OkMaybe & { code?: string }>('rejoin', {
+          code: current.code,
+          playerId: current.playerId,
+        })
         if (sessionEpoch !== epochAtStart) return { ok: false, error: 'session replaced' }
         if (last.ok && last.room) {
           activeRoomCode = last.room.code
           return last
         }
+        if (last.code && FATAL_REJOIN.has(last.code)) {
+          clearSession()
+          return last
+        }
       } catch {
         last = { ok: false, error: 'reconnect failed' }
       }
-      await new Promise((r) => setTimeout(r, 600 * (i + 1)))
+      await new Promise((r) => setTimeout(r, 700 * (i + 1)))
     }
     return last
   })()

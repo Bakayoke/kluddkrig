@@ -24,12 +24,14 @@ import {
   setLanguage,
   setPersistHook,
   setPublicLobby,
+  setRoomDirtyHook,
   startGame,
   submitDrawing,
   submitGuess,
   submitSabotage,
   submitVote,
   toPublicRoom,
+  listSocketBindings,
 } from './rooms.js'
 import { buildSnapshot, flushPersist, initPersist, loadSnapshot, persistDiagnostics, scheduleSave } from './persist.js'
 import {
@@ -72,7 +74,7 @@ app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
     name: 'kluddkrig',
-    version: '2026-10-10-no-timer',
+    version: '2026-10-17-session-stable',
     rooms: allRooms().size,
     persist: persistDiagnostics(),
   })
@@ -142,23 +144,28 @@ const io = new Server(httpServer, {
     methods: ['GET', 'POST'],
     credentials: true,
   },
-  pingInterval: 20_000,
-  pingTimeout: 60_000,
-  connectTimeout: 30_000,
+  pingInterval: 25_000,
+  pingTimeout: 90_000,
+  connectTimeout: 45_000,
   maxHttpBufferSize: 2e6,
 })
 
 function broadcastRoom(roomCode: string) {
   const room = getRoom(roomCode)
   if (!room) return
-  const sockets = io.sockets.adapter.rooms.get(roomCode)
-  if (!sockets) return
-  for (const socketId of sockets) {
+  const socketIds = new Set<string>()
+  for (const [sid, b] of listSocketBindings()) {
+    if (b.code === roomCode) socketIds.add(sid)
+  }
+  const ioRoom = io.sockets.adapter.rooms.get(roomCode)
+  if (ioRoom) {
+    for (const sid of ioRoom) socketIds.add(sid)
+  }
+  for (const socketId of socketIds) {
     const binding = getBinding(socketId)
     const socket = io.sockets.sockets.get(socketId)
-    if (socket && binding) {
-      socket.emit('room', toPublicRoom(room, binding.playerId))
-    }
+    if (!socket || !binding || binding.code !== roomCode) continue
+    socket.emit('room', toPublicRoom(room, binding.playerId))
   }
 }
 
@@ -216,12 +223,12 @@ io.on('connection', (socket) => {
 
   socket.on('rejoin', ({ code, playerId }, ack) => {
     try {
-      leaveAllGameRooms(socket)
       const result = reconnectSocket(String(code ?? ''), String(playerId ?? ''), socket.id)
       if ('error' in result) {
-        ack?.({ ok: false, ...result })
+        ack?.({ ok: false, error: result.error, code: result.code })
         return
       }
+      leaveAllGameRooms(socket)
       socket.join(result.code)
       const payload = { ok: true as const, playerId, room: toPublicRoom(result, playerId) }
       ack?.(payload)
@@ -376,6 +383,7 @@ async function boot() {
   console.log(`Stats: ${stats.name}${stats.configured ? '' : ' (ephemeral — set REDIS_URL to keep counts)'}`)
   const persistNow = () => scheduleSave(buildSnapshot(allRooms().values()))
   setPersistHook(persistNow)
+  setRoomDirtyHook((code) => broadcastRoom(code))
 
   const snapshot = await loadSnapshot()
   if (snapshot) {

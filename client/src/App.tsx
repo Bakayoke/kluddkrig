@@ -915,17 +915,59 @@ export default function App() {
       return
     }
 
+    let cancelled = false
     const session = loadSession()
     if (!session) return
+
     void (async () => {
       const res = await ensureSessionBound()
+      if (cancelled) return
       if (res?.ok && res.room && res.playerId) {
         setRoom(res.room)
         setPlayerId(res.playerId)
         setLang(res.room.language)
         setScreen('room')
+        return
+      }
+      // Dead session (room gone / player gone) — don't keep bouncing into a ghost party.
+      if (res && !res.ok && (res.code === 'NOT_FOUND' || res.code === 'NO_PLAYER')) {
+        clearSession()
       }
     })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // Phones backgrounding / Wi‑Fi blips: re-bind when the tab becomes visible again.
+  useEffect(() => {
+    const rebind = () => {
+      if (document.visibilityState !== 'visible') return
+      if (!loadSession()) return
+      void (async () => {
+        const res = await ensureSessionBound(3)
+        if (res?.ok && res.room && res.playerId) {
+          setRoom(res.room)
+          setPlayerId(res.playerId)
+          setLang(res.room.language)
+          setScreen('room')
+        } else if (res && !res.ok && (res.code === 'NOT_FOUND' || res.code === 'NO_PLAYER')) {
+          clearSession()
+          setRoom(null)
+          setPlayerId(null)
+          setScreen('home')
+        }
+      })()
+    }
+    document.addEventListener('visibilitychange', rebind)
+    window.addEventListener('online', rebind)
+    window.addEventListener('pageshow', rebind)
+    return () => {
+      document.removeEventListener('visibilitychange', rebind)
+      window.removeEventListener('online', rebind)
+      window.removeEventListener('pageshow', rebind)
+    }
   }, [])
 
   function enterRoom(r: PublicRoom, pid: string, name: string, asTvHost = false) {
