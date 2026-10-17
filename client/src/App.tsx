@@ -43,7 +43,7 @@ const PULSEKAOS_URL = 'https://pulsekaos.com'
 const SWISH_PAYEE = '46730457930'
 const SWISH_DISPLAY = '073-045 79 30'
 
-function swishFikaUrl(amountSek = 40) {
+function swishHttpsUrl(amountSek = 40) {
   const params = new URLSearchParams({
     sw: SWISH_PAYEE,
     amt: amountSek.toFixed(1),
@@ -51,6 +51,41 @@ function swishFikaUrl(amountSek = 40) {
     edit: 'amt,msg',
   })
   return `https://app.swish.nu/1/p/sw/?${params.toString()}`
+}
+
+/** Native scheme — opens Swish directly on phones that have the app. */
+function swishDeepLink(amountSek = 40) {
+  const data = {
+    version: 1,
+    payee: { value: SWISH_PAYEE },
+    amount: { value: amountSek, editable: true },
+    message: { value: 'Kluddkrig fika', editable: true },
+  }
+  return `swish://payment?data=${encodeURIComponent(JSON.stringify(data))}`
+}
+
+function openSwishFika(amountSek = 40) {
+  const httpsUrl = swishHttpsUrl(amountSek)
+  const deep = swishDeepLink(amountSek)
+
+  // Prefer the native scheme so Swish auto-opens (same window — new tabs block app handoff).
+  window.location.href = deep
+
+  // If the app didn't take over, fall back to the official https prefill URL.
+  const started = Date.now()
+  const fallback = window.setTimeout(() => {
+    if (document.visibilityState !== 'visible') return
+    if (Date.now() - started > 2000) return
+    window.location.href = httpsUrl
+  }, 700)
+
+  const cancel = () => {
+    if (document.visibilityState === 'hidden') {
+      window.clearTimeout(fallback)
+      document.removeEventListener('visibilitychange', cancel)
+    }
+  }
+  document.addEventListener('visibilitychange', cancel)
 }
 
 function TipFika({ lang, compact }: { lang: Lang; compact?: boolean }) {
@@ -69,7 +104,14 @@ function TipFika({ lang, compact }: { lang: Lang; compact?: boolean }) {
 
   return (
     <div className={`tip-fika${compact ? ' compact' : ''}`}>
-      <a className="tip-fika-link" href={swishFikaUrl(40)} target="_blank" rel="noreferrer">
+      <a
+        className="tip-fika-link"
+        href={swishHttpsUrl(40)}
+        onClick={(e) => {
+          e.preventDefault()
+          openSwishFika(40)
+        }}
+      >
         <strong>{ui.tipFika}</strong>
         <span className="tip-fika-hint">{ui.tipFikaHint}</span>
       </a>
