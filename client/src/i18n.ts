@@ -96,10 +96,6 @@ const sv = {
   finaleBanner: 'FINAL — dubbla poäng!',
   awardsTitle: 'Kvällens titlar',
   reactHint: 'Reagera!',
-  tipFika: 'Bjud på fika',
-  tipFikaHint: 'Öppnar Swish med 40 kr — ändra belopp om du vill',
-  tipCopied: 'Nummer kopierat',
-  tipCopy: 'Kopiera nummer',
 }
 
 const en: typeof sv = {
@@ -198,10 +194,6 @@ const en: typeof sv = {
   finaleBanner: 'FINALE — double points!',
   awardsTitle: 'Tonight’s titles',
   reactHint: 'React!',
-  tipFika: 'Buy me a fika',
-  tipFikaHint: 'Opens Swish with 40 SEK — change amount if you like',
-  tipCopied: 'Number copied',
-  tipCopy: 'Copy number',
 }
 
 export type UiCopy = typeof sv

@@ -39,89 +39,6 @@ const YOURTASKIS_URL = 'https://yourtaskis.com'
 const SCOURGEBORN_URL = 'https://scourgeborn.com'
 const PULSEKAOS_URL = 'https://pulsekaos.com'
 
-/** Personal Swish — opens the Swish app with a prefilled tip. */
-const SWISH_PAYEE = '46730457930'
-const SWISH_DISPLAY = '073-045 79 30'
-
-function swishHttpsUrl(amountSek = 40) {
-  const params = new URLSearchParams({
-    sw: SWISH_PAYEE,
-    amt: amountSek.toFixed(1),
-    msg: 'Kluddkrig fika',
-    edit: 'amt,msg',
-  })
-  return `https://app.swish.nu/1/p/sw/?${params.toString()}`
-}
-
-/** Native scheme — opens Swish directly on phones that have the app. */
-function swishDeepLink(amountSek = 40) {
-  const data = {
-    version: 1,
-    payee: { value: SWISH_PAYEE },
-    amount: { value: amountSek, editable: true },
-    message: { value: 'Kluddkrig fika', editable: true },
-  }
-  return `swish://payment?data=${encodeURIComponent(JSON.stringify(data))}`
-}
-
-function openSwishFika(amountSek = 40) {
-  const httpsUrl = swishHttpsUrl(amountSek)
-  const deep = swishDeepLink(amountSek)
-
-  // Prefer the native scheme so Swish auto-opens (same window — new tabs block app handoff).
-  window.location.href = deep
-
-  // If the app didn't take over, fall back to the official https prefill URL.
-  const started = Date.now()
-  const fallback = window.setTimeout(() => {
-    if (document.visibilityState !== 'visible') return
-    if (Date.now() - started > 2000) return
-    window.location.href = httpsUrl
-  }, 700)
-
-  const cancel = () => {
-    if (document.visibilityState === 'hidden') {
-      window.clearTimeout(fallback)
-      document.removeEventListener('visibilitychange', cancel)
-    }
-  }
-  document.addEventListener('visibilitychange', cancel)
-}
-
-function TipFika({ lang, compact }: { lang: Lang; compact?: boolean }) {
-  const ui = t(lang)
-  const [copied, setCopied] = useState(false)
-
-  async function copyNumber() {
-    try {
-      await navigator.clipboard.writeText(`+${SWISH_PAYEE}`)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 2000)
-    } catch {
-      /* ignore */
-    }
-  }
-
-  return (
-    <div className={`tip-fika${compact ? ' compact' : ''}`}>
-      <a
-        className="tip-fika-link"
-        href={swishHttpsUrl(40)}
-        onClick={(e) => {
-          e.preventDefault()
-          openSwishFika(40)
-        }}
-      >
-        <strong>{ui.tipFika}</strong>
-        <span className="tip-fika-hint">{ui.tipFikaHint}</span>
-      </a>
-      <button type="button" className="tip-fika-copy" onClick={() => void copyNumber()}>
-        {copied ? ui.tipCopied : `${ui.tipCopy} · ${SWISH_DISPLAY}`}
-      </button>
-    </div>
-  )
-}
-
 function SisterGames({ compact, hubHint }: { compact?: boolean; hubHint: string }) {
   return (
     <div className={`sister-games${compact ? ' compact' : ''}`}>
@@ -244,8 +161,6 @@ function Home({
           <li>{ui.how4}</li>
         </ol>
       </section>
-
-      <TipFika lang={lang} />
 
       <p className="sister-label">{ui.sister}</p>
       <SisterGames hubHint={ui.sisterHub} />
@@ -950,7 +865,6 @@ function RoomView({
               </button>
             </div>
           )}
-          {!tvMode && <TipFika lang={room.language} compact />}
         </section>
       )}
 
